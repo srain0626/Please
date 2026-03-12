@@ -205,6 +205,22 @@ class SQLiteStore:
             ).fetchall()
         return rows
 
+    def latest_execution_order_id(self, client_order_id: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT order_id
+                FROM order_executions
+                WHERE client_order_id=?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (client_order_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return str(row[0]) if row[0] else None
+
     def record_event(self, event_type: str, details: str) -> None:
         with self._connect() as conn:
             conn.execute(

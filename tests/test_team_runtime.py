@@ -82,6 +82,13 @@ class TeamRuntimeTests(unittest.TestCase):
                 client_order_id="manual-pending-id",
                 status="submitted",
             )
+            store.record_order_execution(
+                client_order_id="manual-pending-id",
+                broker="mock",
+                order_id="order-1",
+                status="submitted",
+                raw_response="{}",
+            )
 
             runtime = AgentRuntime(
                 strategy=StrategyEngine(),
@@ -92,8 +99,9 @@ class TeamRuntimeTests(unittest.TestCase):
             )
             runtime.recover_pending_orders()
 
-            events = list(store.recent_events(limit=5))
+            events = list(store.recent_events(limit=10))
             self.assertTrue(any("manual-pending-id" in event[2] for event in events))
+            self.assertEqual(len(store.pending_order_intents()), 0)
 
 
 if __name__ == "__main__":

@@ -114,6 +114,35 @@ class AgentRuntime:
                 "recovery_pending_order",
                 f"market={market};symbol={symbol};client_order_id={client_order_id}",
             )
+            order_id = self.store.latest_execution_order_id(client_order_id)
+            if not order_id:
+                self._record_event(
+                    "recovery_pending_order_missing_order_id",
+                    f"market={market};symbol={symbol};client_order_id={client_order_id}",
+                )
+                continue
+            try:
+                market_enum = OpportunityType(market)
+            except ValueError:
+                self._record_event(
+                    "recovery_pending_order_invalid_market",
+                    f"market={market};symbol={symbol};client_order_id={client_order_id}",
+                )
+                continue
+
+            try:
+                status_data = self.broker.get_order(market_enum, symbol, order_id)
+                resolved_status = str(status_data.get("status", "submitted")).lower()
+                self.store.update_order_intent_status(client_order_id, resolved_status)
+                self._record_event(
+                    "recovery_order_status_sync",
+                    f"market={market};symbol={symbol};client_order_id={client_order_id};order_id={order_id};status={resolved_status}",
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._record_event(
+                    "recovery_order_status_failed",
+                    f"market={market};symbol={symbol};client_order_id={client_order_id};order_id={order_id};error={exc}",
+                )
 
     def _over_loss_limit(self, state: AgentState) -> bool:
         max_loss = state.starting_budget * self.config.daily_loss_limit_ratio
