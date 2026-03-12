@@ -90,6 +90,59 @@ export BINANCE_API_SECRET="..."
 - `team_kpi_snapshots`: 팀 KPI 시계열 스냅샷
 
 또한 `team_kpis()`로 팀원별 task 수, 매출, 비용, 이익을 집계합니다.
+python main.py --provider claude
+python main.py --provider copilot
+```
+
+- 기본은 **dry-run(stub)** 이므로 API 키 없이도 동작합니다.
+- `--live-api`를 붙이면 실제 API를 호출합니다(해당 키 필요).
+
+## 실 API 사용
+
+### 1) OpenAI
+
+```bash
+export OPENAI_API_KEY="..."
+python main.py --provider openai --model gpt-4o-mini --live-api
+```
+
+### 2) Claude (Anthropic)
+
+```bash
+export ANTHROPIC_API_KEY="..."
+python main.py --provider claude --model claude-3-5-sonnet-latest --live-api
+```
+
+### 3) Copilot (GitHub Models)
+
+```bash
+export GITHUB_TOKEN="..."
+python main.py --provider copilot --model gpt-4o-mini --live-api
+```
+
+## CLI 옵션
+
+- `--provider`: `openai | claude | copilot`
+- `--model`: 모델명 오버라이드
+- `--live-api`: 실제 API 호출 활성화 (기본 off)
+- `--budget`: 시작 예산(기본 700)
+
+## 구현 포인트
+
+1. `StrategyEngine`
+   - 기대수익-비용 중심 정렬
+   - `max_risk_score` 초과 기회 제외
+   - `reserve_ratio` 안전자금 보존
+   - 시장 타입(사업/주식/가상화폐)에 따라 액션 플랜 분기
+
+2. `AgentRuntime`
+   - 메인 에이전트가 팀(`AgentTeam`)을 통해 서브 에이전트에 태스크 배정
+   - `BrokerTool`로 주식/가상화폐 주문 실행 경로 처리
+   - 시장별 보수적 실현계수로 비용/매출 반영
+
+3. `LLM provider layer`
+   - `agent/llm.py`에서 provider별 endpoint/header/payload 처리
+   - 키가 없거나 `--live-api` 미사용이면 자동으로 stub 모드
 
 ## 테스트
 
