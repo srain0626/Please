@@ -255,6 +255,104 @@ class SQLiteStore:
                     (kpi.assignee, kpi.task_count, kpi.revenue, kpi.cost, kpi.profit),
                 )
 
+
+    def summary_metrics(self) -> dict[str, float]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    COALESCE(SUM(realized_revenue), 0),
+                    COALESCE(SUM(estimated_cost), 0),
+                    COUNT(*),
+                    COALESCE(SUM(CASE WHEN status='done' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END), 0)
+                FROM task_runs
+                """
+            ).fetchone()
+            pending_orders = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM order_intents
+                WHERE status IN ('submitted', 'partial_fill')
+                """
+            ).fetchone()
+
+        revenue = float(row[0]) if row else 0.0
+        cost = float(row[1]) if row else 0.0
+        return {
+            "revenue": revenue,
+            "cost": cost,
+            "profit": revenue - cost,
+            "task_runs": int(row[2]) if row else 0,
+            "done_tasks": int(row[3]) if row else 0,
+            "failed_tasks": int(row[4]) if row else 0,
+            "pending_orders": int(pending_orders[0]) if pending_orders else 0,
+        }
+
+    def list_task_runs(self, limit: int = 100) -> list[tuple]:
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT id, task_id, assignee, channel, instrument, estimated_cost, realized_revenue, status, created_at
+                FROM task_runs
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+
+    def list_positions(self, limit: int = 100) -> list[tuple]:
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT id, market, symbol, budget, side, status, metadata, created_at
+                FROM positions
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+
+    def list_order_intents(self, limit: int = 100) -> list[tuple]:
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT id, task_id, market, symbol, side, budget, client_order_id, status, created_at
+                FROM order_intents
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+
+    def list_order_executions(self, limit: int = 100) -> list[tuple]:
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT id, client_order_id, broker, order_id, status, created_at
+                FROM order_executions
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+
+    def list_team_kpi_snapshots(self, limit: int = 100) -> list[tuple]:
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT id, assignee, task_count, revenue, cost, profit, created_at
+                FROM team_kpi_snapshots
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+
+    def update_position_status(self, position_id: int, status: str) -> None:
+        with self._connect() as conn:
+            conn.execute("UPDATE positions SET status=? WHERE id=?", (status, position_id))
+
     def recent_events(self, limit: int = 20) -> Iterable[tuple[int, str, str, str]]:
         with self._connect() as conn:
             rows = conn.execute(

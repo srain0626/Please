@@ -78,6 +78,12 @@ def parse_args() -> argparse.Namespace:
         help="Call live API if provider API key exists. Default is dry-run stub.",
     )
     parser.add_argument("--budget", type=float, default=700.0)
+    parser.add_argument(
+        "--max-market-exposure-ratio",
+        type=float,
+        default=0.6,
+        help="Max exposure per market (stock/crypto) as ratio of starting budget",
+    )
     parser.add_argument("--db-path", default="agent_state.db", help="SQLite persistence path")
     return parser.parse_args()
 
@@ -98,7 +104,12 @@ def main() -> None:
         broker=UnifiedBroker(),
         team=team,
         store=store,
-        config=RuntimeConfig(max_cycles=5, max_single_trade_ratio=0.35, daily_loss_limit_ratio=0.15),
+        config=RuntimeConfig(
+            max_cycles=5,
+            max_single_trade_ratio=0.35,
+            max_market_exposure_ratio=args.max_market_exposure_ratio,
+            daily_loss_limit_ratio=0.15,
+        ),
     )
 
     result = runtime.run(state, sample_opportunities())

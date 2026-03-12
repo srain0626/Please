@@ -37,6 +37,7 @@ class BrokerTool(Protocol):
 class RuntimeConfig:
     max_cycles: int = 5
     max_single_trade_ratio: float = 0.35
+    max_market_exposure_ratio: float = 0.6
     daily_loss_limit_ratio: float = 0.15
 
 
@@ -163,6 +164,16 @@ class AgentRuntime:
             if task.estimated_cost > max_trade_budget:
                 raise ValueError(f"task budget exceeds limit: {task.estimated_cost:.2f} > {max_trade_budget:.2f}")
 
+            if task.channel in (OpportunityType.STOCK, OpportunityType.CRYPTO):
+                max_market_exposure = state.starting_budget * self.config.max_market_exposure_ratio
+                current_market_exposure = self._market_exposure(state, task.channel)
+                next_exposure = current_market_exposure + task.estimated_cost
+                if next_exposure > max_market_exposure:
+                    raise ValueError(
+                        "market exposure exceeds limit: "
+                        f"{next_exposure:.2f} > {max_market_exposure:.2f} for market={task.channel.value}"
+                    )
+
             research = self.browser.run(f"시장 검증: {task.title}")
             build_log = self.shell.run("워크플로 빌드 및 실행")
 
@@ -238,6 +249,9 @@ class AgentRuntime:
             self.store.update_order_intent_status(client_order_id=client_order_id, status=status)
 
         return raw_response
+
+    def _market_exposure(self, state: AgentState, market: OpportunityType) -> float:
+        return sum(task.estimated_cost for task in state.completed_tasks if task.channel == market)
 
     def _record_position(self, task: Task) -> None:
         if not self.store:

@@ -19,7 +19,7 @@ Conway Research Automaton 스타일(계획 → 실행 → 평가 → 재계획) 
   - 추가: `order_intents`, `order_executions`, `team_kpi_snapshots`
 - **리커버리 워커 스캐폴딩**
   - 런타임 시작 시 미완료 주문 의도(`order_intents`)를 스캔해 이벤트로 기록
-- **리스크 가드레일**: 단일 트레이드 비중 제한, 손실 한도 초과 시 실행 중단
+- **리스크 가드레일**: 단일 트레이드 비중 제한, 시장별 익스포저 한도, 손실 한도 초과 시 실행 중단
 
 ## 프로젝트 구조
 
@@ -36,6 +36,7 @@ Conway Research Automaton 스타일(계획 → 실행 → 평가 → 재계획) 
 ├── tests
 │   └── test_team_runtime.py
 ├── main.py
+├── dashboard.py
 └── README.md
 ```
 
@@ -76,6 +77,7 @@ export BINANCE_API_SECRET="..."
 - `--model`: 모델 오버라이드
 - `--live-api`: 실 LLM API 호출
 - `--budget`: 시작 예산
+- `--max-market-exposure-ratio`: 시장(주식/가상화폐)별 최대 익스포저 비율
 - `--db-path`: SQLite 파일 경로
 
 ## 영속성 데이터
@@ -90,6 +92,24 @@ export BINANCE_API_SECRET="..."
 - `team_kpi_snapshots`: 팀 KPI 시계열 스냅샷
 
 또한 `team_kpis()`로 팀원별 task 수, 매출, 비용, 이익을 집계합니다.
+
+## GUI 대시보드
+
+모든 핵심 데이터를 조회/관리할 수 있는 웹 대시보드를 제공합니다.
+
+```bash
+python dashboard.py --db-path agent_state.db --port 8080
+```
+
+브라우저에서 `http://localhost:8080` 접속 후 다음을 수행할 수 있습니다.
+
+- KPI/수익/비용/미체결 주문 현황 확인
+- Task Runs / Positions / Order Intents / Executions / KPI Snapshots / Events 조회
+- 수동 관리 액션
+  - KPI snapshot 생성
+  - 주문 의도(`order_intents`) 상태 변경
+  - 포지션 상태 변경
+  - 수동 이벤트 기록
 python main.py --provider claude
 python main.py --provider copilot
 ```

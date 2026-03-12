@@ -70,6 +70,31 @@ class TeamRuntimeTests(unittest.TestCase):
         self.assertEqual(len(result.completed_tasks), 0)
         self.assertEqual(len(result.failed_tasks), 1)
 
+    def test_market_exposure_guard_blocks_second_trade(self) -> None:
+        opportunities = [
+            Opportunity("stock1", "d", 200, 260, 0.2, OpportunityType.STOCK, symbol="AAPL"),
+            Opportunity("stock2", "d", 200, 250, 0.2, OpportunityType.STOCK, symbol="MSFT"),
+        ]
+        state = AgentState(starting_budget=500, cash=500)
+
+        runtime = AgentRuntime(
+            strategy=StrategyEngine(),
+            browser=MockBrowser(),
+            shell=MockShell(),
+            broker=MockBroker(),
+            config=RuntimeConfig(
+                max_cycles=5,
+                max_single_trade_ratio=0.6,
+                max_market_exposure_ratio=0.6,
+                daily_loss_limit_ratio=0.5,
+            ),
+        )
+
+        result = runtime.run(state, opportunities)
+        self.assertEqual(len(result.completed_tasks), 1)
+        self.assertEqual(len(result.failed_tasks), 1)
+        self.assertIn("market exposure exceeds limit", result.failed_tasks[0].notes)
+
     def test_recovery_worker_records_pending_intent_events(self) -> None:
         with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
             store = SQLiteStore(db_path=tmp.name)
