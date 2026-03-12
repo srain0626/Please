@@ -98,7 +98,7 @@ export BINANCE_API_SECRET="..."
 모든 핵심 데이터를 조회/관리할 수 있는 웹 대시보드를 제공합니다.
 
 ```bash
-python dashboard.py --db-path agent_state.db --port 8080
+python dashboard.py --db-path agent_state.db --port 8080 --username admin --password "change-me"
 ```
 
 브라우저에서 `http://localhost:8080` 접속 후 다음을 수행할 수 있습니다.
@@ -110,6 +110,11 @@ python dashboard.py --db-path agent_state.db --port 8080
   - 주문 의도(`order_intents`) 상태 변경
   - 포지션 상태 변경
   - 수동 이벤트 기록
+- 운영 하드닝
+  - Basic Auth(`--username/--password` 또는 `DASHBOARD_USERNAME/DASHBOARD_PASSWORD`)
+  - 보안 헤더(`X-Frame-Options`, `X-Content-Type-Options`)
+  - JSON API(`/api/summary`) 제공
+  - 입력 유효성 검증(상태값/쿼리 limit)
 python main.py --provider claude
 python main.py --provider copilot
 ```

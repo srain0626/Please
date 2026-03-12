@@ -7,6 +7,9 @@ from typing import Iterable
 
 from .models import OpportunityType, Task
 
+ORDER_INTENT_STATUSES = {"submitted", "partial_fill", "filled", "canceled", "rejected", "stub_submitted"}
+POSITION_STATUSES = {"submitted", "open", "closed", "canceled"}
+
 
 @dataclass
 class TeamKPI:
@@ -112,6 +115,21 @@ class SQLiteStore:
                 """
             )
 
+    def _validate_limit(self, limit: int) -> int:
+        return max(1, min(limit, 1000))
+
+    def _validate_order_intent_status(self, status: str) -> str:
+        normalized = status.lower().strip()
+        if normalized not in ORDER_INTENT_STATUSES:
+            raise ValueError(f"invalid order intent status: {status}")
+        return normalized
+
+    def _validate_position_status(self, status: str) -> str:
+        normalized = status.lower().strip()
+        if normalized not in POSITION_STATUSES:
+            raise ValueError(f"invalid position status: {status}")
+        return normalized
+
     def record_task_run(self, task: Task, assignee: str, realized_revenue: float) -> None:
         with self._connect() as conn:
             conn.execute(
@@ -140,13 +158,14 @@ class SQLiteStore:
         status: str,
         metadata: str,
     ) -> None:
+        valid_status = self._validate_position_status(status)
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO positions(market, symbol, budget, side, status, metadata)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (market.value, symbol, budget, side, status, metadata),
+                (market.value, symbol, budget, side, valid_status, metadata),
             )
 
     def record_order_intent(
@@ -159,6 +178,7 @@ class SQLiteStore:
         client_order_id: str,
         status: str,
     ) -> None:
+        valid_status = self._validate_order_intent_status(status)
         with self._connect() as conn:
             conn.execute(
                 """
@@ -166,7 +186,7 @@ class SQLiteStore:
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(client_order_id) DO UPDATE SET status=excluded.status
                 """,
-                (task_id, market.value, symbol, side, budget, client_order_id, status),
+                (task_id, market.value, symbol, side, budget, client_order_id, valid_status),
             )
 
     def record_order_execution(
@@ -186,12 +206,14 @@ class SQLiteStore:
                 (client_order_id, broker, order_id, status, raw_response),
             )
 
-    def update_order_intent_status(self, client_order_id: str, status: str) -> None:
+    def update_order_intent_status(self, client_order_id: str, status: str) -> bool:
+        valid_status = self._validate_order_intent_status(status)
         with self._connect() as conn:
-            conn.execute(
+            cur = conn.execute(
                 "UPDATE order_intents SET status=? WHERE client_order_id=?",
-                (status, client_order_id),
+                (valid_status, client_order_id),
             )
+        return cur.rowcount > 0
 
     def pending_order_intents(self) -> list[tuple[str, str, str]]:
         with self._connect() as conn:
@@ -255,7 +277,6 @@ class SQLiteStore:
                     (kpi.assignee, kpi.task_count, kpi.revenue, kpi.cost, kpi.profit),
                 )
 
-
     def summary_metrics(self) -> dict[str, float]:
         with self._connect() as conn:
             row = conn.execute(
@@ -290,6 +311,7 @@ class SQLiteStore:
         }
 
     def list_task_runs(self, limit: int = 100) -> list[tuple]:
+        safe_limit = self._validate_limit(limit)
         with self._connect() as conn:
             return conn.execute(
                 """
@@ -298,10 +320,11 @@ class SQLiteStore:
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                (limit,),
+                (safe_limit,),
             ).fetchall()
 
     def list_positions(self, limit: int = 100) -> list[tuple]:
+        safe_limit = self._validate_limit(limit)
         with self._connect() as conn:
             return conn.execute(
                 """
@@ -310,10 +333,11 @@ class SQLiteStore:
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                (limit,),
+                (safe_limit,),
             ).fetchall()
 
     def list_order_intents(self, limit: int = 100) -> list[tuple]:
+        safe_limit = self._validate_limit(limit)
         with self._connect() as conn:
             return conn.execute(
                 """
@@ -322,10 +346,11 @@ class SQLiteStore:
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                (limit,),
+                (safe_limit,),
             ).fetchall()
 
     def list_order_executions(self, limit: int = 100) -> list[tuple]:
+        safe_limit = self._validate_limit(limit)
         with self._connect() as conn:
             return conn.execute(
                 """
@@ -334,10 +359,11 @@ class SQLiteStore:
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                (limit,),
+                (safe_limit,),
             ).fetchall()
 
     def list_team_kpi_snapshots(self, limit: int = 100) -> list[tuple]:
+        safe_limit = self._validate_limit(limit)
         with self._connect() as conn:
             return conn.execute(
                 """
@@ -346,17 +372,20 @@ class SQLiteStore:
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                (limit,),
+                (safe_limit,),
             ).fetchall()
 
-    def update_position_status(self, position_id: int, status: str) -> None:
+    def update_position_status(self, position_id: int, status: str) -> bool:
+        valid_status = self._validate_position_status(status)
         with self._connect() as conn:
-            conn.execute("UPDATE positions SET status=? WHERE id=?", (status, position_id))
+            cur = conn.execute("UPDATE positions SET status=? WHERE id=?", (valid_status, position_id))
+        return cur.rowcount > 0
 
     def recent_events(self, limit: int = 20) -> Iterable[tuple[int, str, str, str]]:
+        safe_limit = self._validate_limit(limit)
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT id, event_type, details, created_at FROM system_events ORDER BY id DESC LIMIT ?",
-                (limit,),
+                (safe_limit,),
             ).fetchall()
         return rows
