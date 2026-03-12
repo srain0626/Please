@@ -9,11 +9,13 @@ from agent import (
     LLMBrowser,
     LLMShell,
     LLMProvider,
-    MockBroker,
     Opportunity,
     OpportunityType,
+    RuntimeConfig,
+    SQLiteStore,
     StrategyEngine,
     SubAgent,
+    UnifiedBroker,
     create_llm_client,
     default_model,
 )
@@ -45,7 +47,7 @@ def sample_opportunities() -> list[Opportunity]:
             expected_return=220.0,
             risk_score=0.45,
             opportunity_type=OpportunityType.CRYPTO,
-            symbol="BTC-USD",
+            symbol="BTC-USDT",
         ),
     ]
 
@@ -76,6 +78,7 @@ def parse_args() -> argparse.Namespace:
         help="Call live API if provider API key exists. Default is dry-run stub.",
     )
     parser.add_argument("--budget", type=float, default=700.0)
+    parser.add_argument("--db-path", default="agent_state.db", help="SQLite persistence path")
     return parser.parse_args()
 
 
@@ -87,12 +90,15 @@ def main() -> None:
 
     state = AgentState(starting_budget=args.budget, cash=args.budget)
     team = build_default_team()
+    store = SQLiteStore(db_path=args.db_path)
     runtime = AgentRuntime(
         strategy=StrategyEngine(),
         browser=LLMBrowser(llm),
         shell=LLMShell(llm),
-        broker=MockBroker(),
+        broker=UnifiedBroker(),
         team=team,
+        store=store,
+        config=RuntimeConfig(max_cycles=5, max_single_trade_ratio=0.35, daily_loss_limit_ratio=0.15),
     )
 
     result = runtime.run(state, sample_opportunities())
@@ -108,6 +114,13 @@ def main() -> None:
     print(f"roi: {result.roi:.2%}")
     print(f"completed_tasks: {len(result.completed_tasks)}")
     print(f"failed_tasks: {len(result.failed_tasks)}")
+
+    print("\n=== Team KPI ===")
+    for row in store.team_kpis():
+        print(
+            f"{row.assignee}: tasks={row.task_count}, revenue={row.revenue:.2f}, "
+            f"cost={row.cost:.2f}, profit={row.profit:.2f}"
+        )
 
 
 if __name__ == "__main__":

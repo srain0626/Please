@@ -4,19 +4,22 @@
 
 Conway Research Automaton 스타일(계획 → 실행 → 평가 → 재계획) 루프를 반영했고, LLM 공급자로 **OpenAI / Claude / Copilot**을 선택할 수 있습니다.
 
-## 이번 개선 사항
+## 이번 단계에서 추가된 핵심 기능
 
-- **주식 투자 기능**: `OpportunityType.STOCK` + 브로커 주문 경로
-- **가상화폐 투자 기능**: `OpportunityType.CRYPTO` + 브로커 주문 경로
-- **에이전트 팀 기능**: 메인 에이전트가 서브 에이전트 팀을 구성해 시장별로 업무를 분담
-
-## 핵심 개념
-
-- **Budget-aware planning**: 보유 현금과 안전 예산(reserve)을 고려해 실행할 기회만 선택
-- **Risk policy**: 리스크 점수가 높은 기회는 자동 제외
-- **Autonomous loop**: 전략 엔진이 Task를 만들고 런타임이 브라우저/셸/브로커 도구를 통해 실행
-- **Provider-pluggable LLM**: openai / claude / copilot 중 선택
-- **Team orchestration**: `main-agent`가 `biz-operator`, `stock-trader`, `crypto-trader`에게 태스크를 배정
+- **메인 에이전트 + 서브 에이전트 팀 오케스트레이션**
+- **메리츠증권 / Binance 브로커 어댑터 연결 계층** (`UnifiedBroker`)
+- **주문 안정성 강화**
+  - Binance signed endpoint(HMAC SHA-256) + `timestamp`/`recvWindow`
+  - 메리츠 요청용 HMAC 기반 서명 헤더 스캐폴딩
+  - `client_order_id`(멱등키) 기반 주문 추적
+  - 주문 조회(`get_order`) / 취소(`cancel_order`) API 진입점
+  - 재시도(백오프) HTTP 호출
+- **SQLite 영속성 확장**
+  - 기존: `task_runs`, `positions`, `system_events`
+  - 추가: `order_intents`, `order_executions`, `team_kpi_snapshots`
+- **리커버리 워커 스캐폴딩**
+  - 런타임 시작 시 미완료 주문 의도(`order_intents`)를 스캔해 이벤트로 기록
+- **리스크 가드레일**: 단일 트레이드 비중 제한, 손실 한도 초과 시 실행 중단
 
 ## 프로젝트 구조
 
@@ -24,13 +27,15 @@ Conway Research Automaton 스타일(계획 → 실행 → 평가 → 재계획) 
 .
 ├── agent
 │   ├── __init__.py
-│   ├── llm.py         # LLM provider 어댑터(OpenAI/Claude/Copilot)
-│   ├── models.py      # 상태/기회/태스크 데이터 모델(+시장 타입)
-│   ├── strategy.py    # 리스크/예산 기반 기회 선택 + 시장별 플랜
-│   └── runtime.py     # 실행 루프 + 팀 오케스트레이션 + 브로커
+│   ├── brokers.py      # Meritz/Binance/Unified broker adapters (+signed requests)
+│   ├── llm.py          # LLM provider adapters
+│   ├── models.py       # domain models
+│   ├── persistence.py  # SQLite store + TeamKPI + order durability
+│   ├── runtime.py      # runtime + team orchestration + risk/recovery
+│   └── strategy.py     # selection strategy
 ├── tests
 │   └── test_team_runtime.py
-├── main.py            # CLI 엔트리포인트
+├── main.py
 └── README.md
 ```
 
@@ -38,6 +43,53 @@ Conway Research Automaton 스타일(계획 → 실행 → 평가 → 재계획) 
 
 ```bash
 python main.py --provider openai
+```
+
+기본은 dry-run 모드이며 API 키가 없으면 브로커도 stub 모드로 동작합니다.
+
+## API 키 설정
+
+### LLM
+
+```bash
+export OPENAI_API_KEY="..."
+export ANTHROPIC_API_KEY="..."
+export GITHUB_TOKEN="..."
+```
+
+### Brokers
+
+```bash
+# Meritz
+export MERITZ_API_KEY="..."
+export MERITZ_API_SECRET="..."
+export MERITZ_ACCOUNT_NO="..."
+
+# Binance
+export BINANCE_API_KEY="..."
+export BINANCE_API_SECRET="..."
+```
+
+## 주요 옵션
+
+- `--provider`: `openai | claude | copilot`
+- `--model`: 모델 오버라이드
+- `--live-api`: 실 LLM API 호출
+- `--budget`: 시작 예산
+- `--db-path`: SQLite 파일 경로
+
+## 영속성 데이터
+
+`SQLiteStore`는 다음을 저장합니다.
+
+- `task_runs`: 태스크별 담당자/비용/실현매출/상태/노트
+- `positions`: 시장/심볼/주문 예산/상태
+- `system_events`: 실행 이벤트(성공/실패/리스크 중단/복구 스캔)
+- `order_intents`: 브로커 제출 전후 주문 의도(멱등키 포함)
+- `order_executions`: 브로커 응답 스냅샷
+- `team_kpi_snapshots`: 팀 KPI 시계열 스냅샷
+
+또한 `team_kpis()`로 팀원별 task 수, 매출, 비용, 이익을 집계합니다.
 python main.py --provider claude
 python main.py --provider copilot
 ```
@@ -95,12 +147,10 @@ python main.py --provider copilot --model gpt-4o-mini --live-api
 ## 테스트
 
 ```bash
-python -m unittest -v
+python -m unittest discover -s tests -v
 ```
 
-## 다음 단계
+## 참고
 
-- 실제 증권/거래소 API 연동 (한국/미국 증권사, Binance/Upbit 등)
-- 주문 안전장치(최대 슬리피지, 최대 손실률, 서킷브레이커)
-- 포지션/체결/손익 영속화 DB 추가
-- 팀 단위 KPI(에이전트별 승률/손익) 대시보드
+- `agent/brokers.py`의 메리츠 live 서명은 운영 전 최신 공식 문서의 헤더/파라미터 요구사항으로 최종 보정해야 합니다.
+- Binance는 signed endpoint 기본 흐름(HMAC, timestamp, recvWindow)을 반영했지만, 실거래 전 주문 수량/정밀도/규정 필터(`LOT_SIZE`, `MIN_NOTIONAL`) 검증이 추가로 필요합니다.
