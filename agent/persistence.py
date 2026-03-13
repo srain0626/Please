@@ -7,7 +7,7 @@ from typing import Iterable
 
 from .models import OpportunityType, Task
 
-ORDER_INTENT_STATUSES = {"submitted", "partial_fill", "filled", "canceled", "rejected", "stub_submitted"}
+ORDER_INTENT_STATUSES = {"submitted", "partial_fill", "filled", "canceled", "rejected", "rejected_validation", "stub_submitted"}
 POSITION_STATUSES = {"submitted", "open", "closed", "canceled"}
 
 
@@ -354,7 +354,7 @@ class SQLiteStore:
         with self._connect() as conn:
             return conn.execute(
                 """
-                SELECT id, client_order_id, broker, order_id, status, created_at
+                SELECT id, client_order_id, broker, order_id, status, raw_response, created_at
                 FROM order_executions
                 ORDER BY id DESC
                 LIMIT ?

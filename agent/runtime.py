@@ -227,16 +227,18 @@ class AgentRuntime:
             client_order_id=client_order_id,
         )
 
+        validation = None
         if isinstance(result, str):
             status = "filled"
             order_id = client_order_id
             raw_response = result
             broker_name = "generic"
         else:
-            status = getattr(result, "status", "submitted")
+            status = str(getattr(result, "status", "submitted"))
             order_id = str(getattr(result, "order_id", client_order_id))
             raw_response = str(getattr(result, "raw", result))
             broker_name = str(getattr(result, "broker", "generic"))
+            validation = getattr(result, "validation", None)
 
         if self.store:
             self.store.record_order_execution(
@@ -247,6 +249,19 @@ class AgentRuntime:
                 raw_response=raw_response,
             )
             self.store.update_order_intent_status(client_order_id=client_order_id, status=status)
+
+        if validation is not None:
+            if validation.get("valid"):
+                event_type = "order_validation_corrected" if validation.get("corrected") else "order_validation_ok"
+                self._record_event(event_type, f"client_order_id={client_order_id};validation={validation}")
+            else:
+                self._record_event(
+                    "order_validation_failed",
+                    f"client_order_id={client_order_id};reason={validation.get('blocked_reason', 'unknown')};validation={validation}",
+                )
+
+        if status in {"rejected", "rejected_validation"}:
+            raise ValueError(f"order rejected before submit: {raw_response}")
 
         return raw_response
 

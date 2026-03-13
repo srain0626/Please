@@ -14,6 +14,7 @@ Conway Research Automaton 스타일(계획 → 실행 → 평가 → 재계획) 
   - `client_order_id`(멱등키) 기반 주문 추적
   - 주문 조회(`get_order`) / 취소(`cancel_order`) API 진입점
   - 재시도(백오프) HTTP 호출
+  - **Order Validation Engine (Binance)**: tick size / step size / minQty / minNotional / precision 사전검증 및 자동 보정
 - **SQLite 영속성 확장**
   - 기존: `task_runs`, `positions`, `system_events`
   - 추가: `order_intents`, `order_executions`, `team_kpi_snapshots`
@@ -105,6 +106,7 @@ python dashboard.py --db-path agent_state.db --port 8080 --username admin --pass
 
 - KPI/수익/비용/미체결 주문 현황 확인
 - Task Runs / Positions / Order Intents / Executions / KPI Snapshots / Events 조회
+- Order Executions `raw_response`에서 validation 보정/실패 사유 확인 가능
 - 수동 관리 액션
   - KPI snapshot 생성
   - 주문 의도(`order_intents`) 상태 변경

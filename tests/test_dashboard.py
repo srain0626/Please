@@ -55,6 +55,7 @@ class DashboardTests(unittest.TestCase):
             self.assertIn("Order Intents", html)
             self.assertIn("KPI Snapshots", html)
             self.assertIn("stock-trader", html)
+            self.assertIn("{}", html)
 
     def test_summary_metrics_and_position_update(self) -> None:
         with tempfile.NamedTemporaryFile(suffix=".db") as tmp:

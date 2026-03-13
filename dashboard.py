@@ -120,7 +120,7 @@ def render_dashboard(store: SQLiteStore, flash: str = "") -> str:
     <section><h2>Task Runs</h2>{_table(['id','task_id','assignee','channel','instrument','est_cost','realized_revenue','status','created_at'], tasks)}</section>
     <section><h2>Positions</h2>{_table(['id','market','symbol','budget','side','status','metadata','created_at'], positions)}</section>
     <section><h2>Order Intents</h2>{_table(['id','task_id','market','symbol','side','budget','client_order_id','status','created_at'], intents)}</section>
-    <section><h2>Order Executions</h2>{_table(['id','client_order_id','broker','order_id','status','created_at'], executions)}</section>
+    <section><h2>Order Executions</h2>{_table(['id','client_order_id','broker','order_id','status','raw_response','created_at'], executions)}</section>
     <section><h2>KPI Snapshots</h2>{_table(['id','assignee','task_count','revenue','cost','profit','created_at'], snapshots)}</section>
   </div>
 </body>
