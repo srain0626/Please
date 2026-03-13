@@ -4,6 +4,8 @@
 
 Conway Research Automaton 스타일(계획 → 실행 → 평가 → 재계획) 루프를 반영했고, LLM 공급자로 **OpenAI / Claude / Copilot**을 선택할 수 있습니다.
 
+이번 버전은 단순 주문 실행을 넘어 **기회 생성 → 가설화 → 소액 실험 → confidence 업데이트 → validated 전략 승격**의 Strategy Lab 루프를 포함합니다.
+
 ## 이번 단계에서 추가된 핵심 기능
 
 - **메인 에이전트 + 서브 에이전트 팀 오케스트레이션**
@@ -18,6 +20,10 @@ Conway Research Automaton 스타일(계획 → 실행 → 평가 → 재계획) 
 - **SQLite 영속성 확장**
   - 기존: `task_runs`, `positions`, `system_events`
   - 추가: `order_intents`, `order_executions`, `team_kpi_snapshots`
+- **Opportunity Factory**: market signal + recurring internal pattern 기반 기회 생성
+- **Hypothesis / Experiment Persistence**: `hypotheses`, `experiment_runs` 추가
+- **Strategy Lab Loop**: 실험 결과에 따라 confidence 증감 및 상태 전환('proposed/testing/validated/rejected/archived')
+- **Adaptive Learning Upgrade**: 실험 이력(win-rate/평균수익률) 기반 confidence 보정, fallback promotion, rejected 자동 아카이빙
 - **리커버리 워커 스캐폴딩**
   - 런타임 시작 시 미완료 주문 의도(`order_intents`)를 스캔해 이벤트로 기록
 - **리스크 가드레일**: 단일 트레이드 비중 제한, 시장별 익스포저 한도, 손실 한도 초과 시 실행 중단
@@ -29,6 +35,7 @@ Conway Research Automaton 스타일(계획 → 실행 → 평가 → 재계획) 
 ├── agent
 │   ├── __init__.py
 │   ├── brokers.py      # Meritz/Binance/Unified broker adapters (+signed requests)
+│   ├── lab.py          # opportunity factory + hypothesis/experiment loop
 │   ├── llm.py          # LLM provider adapters
 │   ├── models.py       # domain models
 │   ├── persistence.py  # SQLite store + TeamKPI + order durability
@@ -79,6 +86,8 @@ export BINANCE_API_SECRET="..."
 - `--live-api`: 실 LLM API 호출
 - `--budget`: 시작 예산
 - `--max-market-exposure-ratio`: 시장(주식/가상화폐)별 최대 익스포저 비율
+- `--exploratory-budget-ratio`: 실험(탐색) 예산 비율
+- `--lab-cycles`: 실행 전 research loop 반복 횟수
 - `--db-path`: SQLite 파일 경로
 
 ## 영속성 데이터
@@ -91,6 +100,9 @@ export BINANCE_API_SECRET="..."
 - `order_intents`: 브로커 제출 전후 주문 의도(멱등키 포함)
 - `order_executions`: 브로커 응답 스냅샷
 - `team_kpi_snapshots`: 팀 KPI 시계열 스냅샷
+- `hypotheses`: 수익 가설(thesis/evidence/confidence/status)
+- `hypotheses`는 rejected 누적 시 archived로 자동 전환 가능
+- `experiment_runs`: 가설 실험 결과(pnl/return/outcome/failure_reason)
 
 또한 `team_kpis()`로 팀원별 task 수, 매출, 비용, 이익을 집계합니다.
 
@@ -105,6 +117,7 @@ python dashboard.py --db-path agent_state.db --port 8080 --username admin --pass
 브라우저에서 `http://localhost:8080` 접속 후 다음을 수행할 수 있습니다.
 
 - KPI/수익/비용/미체결 주문 현황 확인
+- hypothesis status counts / top confidence hypotheses / recent experiments / lab summary 확인
 - Task Runs / Positions / Order Intents / Executions / KPI Snapshots / Events 조회
 - Order Executions `raw_response`에서 validation 보정/실패 사유 확인 가능
 - 수동 관리 액션

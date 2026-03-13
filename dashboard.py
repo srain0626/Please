@@ -45,6 +45,11 @@ def render_dashboard(store: SQLiteStore, flash: str = "") -> str:
     snapshots = store.list_team_kpi_snapshots(50)
     events = list(store.recent_events(50))
 
+    status_counts = store.hypothesis_status_counts()
+    top_hypotheses = store.top_hypotheses_by_confidence(20)
+    experiments = store.recent_experiment_runs(30)
+    lab = store.lab_summary()
+
     kpi_rows = [(k.assignee, k.task_count, round(k.revenue, 2), round(k.cost, 2), round(k.profit, 2)) for k in kpis]
 
     return f"""
@@ -60,7 +65,7 @@ def render_dashboard(store: SQLiteStore, flash: str = "") -> str:
     h1, h2 {{ margin: 0 0 12px 0; }}
     .muted {{ color: #9ca3af; }}
     .flash {{ background: #1d4ed8; padding: 10px 12px; border-radius: 8px; margin-bottom: 16px; }}
-    .cards {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }}
+    .cards {{ display: grid; grid-template-columns: repeat(8, 1fr); gap: 12px; margin-bottom: 16px; }}
     .card {{ background: #111827; padding: 14px; border-radius: 10px; border: 1px solid #1f2937; }}
     .card .k {{ font-size: 12px; color: #9ca3af; }}
     .card .v {{ font-size: 20px; font-weight: 700; margin-top: 6px; }}
@@ -77,7 +82,7 @@ def render_dashboard(store: SQLiteStore, flash: str = "") -> str:
 <body>
   <div class="container">
     <h1>Autonomous Profit Agent Dashboard</h1>
-    <p class="muted">실행 상태, 주문, 포지션, 이벤트를 한곳에서 조회/관리합니다.</p>
+    <p class="muted">가설 생성 → 실험 → 학습 → 실행 상태를 한곳에서 조회/관리합니다.</p>
     {f'<div class="flash">{escape(flash)}</div>' if flash else ''}
 
     <div class="cards">
@@ -85,6 +90,10 @@ def render_dashboard(store: SQLiteStore, flash: str = "") -> str:
       <div class="card"><div class="k">Cost</div><div class="v">{metrics['cost']:.2f}</div></div>
       <div class="card"><div class="k">Profit</div><div class="v">{metrics['profit']:.2f}</div></div>
       <div class="card"><div class="k">Pending Orders</div><div class="v">{metrics['pending_orders']}</div></div>
+      <div class="card"><div class="k">Validated Hypothesis</div><div class="v">{metrics['validated_hypotheses']}</div></div>
+      <div class="card"><div class="k">Rejected Hypothesis</div><div class="v">{metrics['rejected_hypotheses']}</div></div>
+      <div class="card"><div class="k">Archived Hypothesis</div><div class="v">{metrics['archived_hypotheses']}</div></div>
+      <div class="card"><div class="k">Experiment Avg Return</div><div class="v">{lab['avg_experiment_return_pct']:.2f}</div></div>
     </div>
 
     <section>
@@ -94,7 +103,7 @@ def render_dashboard(store: SQLiteStore, flash: str = "") -> str:
       <form method="post" action="/action/update_intent_status" class="inline">
         <label>Intent client_order_id</label><input name="client_order_id" required />
         <label>Status</label>
-        <select name="status"><option>submitted</option><option>partial_fill</option><option>filled</option><option>canceled</option><option>rejected</option></select>
+        <select name="status"><option>submitted</option><option>partial_fill</option><option>filled</option><option>canceled</option><option>rejected</option><option>rejected_validation</option></select>
         <button type="submit">Intent 상태 변경</button>
       </form>
       <br />
@@ -113,7 +122,14 @@ def render_dashboard(store: SQLiteStore, flash: str = "") -> str:
     </section>
 
     <div class="grid">
-      <section><h2>Team KPI (실시간 집계)</h2>{_table(['assignee', 'task_count', 'revenue', 'cost', 'profit'], kpi_rows)}</section>
+      <section><h2>Hypothesis Status Counts</h2>{_table(['status', 'count'], status_counts)}</section>
+      <section><h2>Top Confidence Hypotheses</h2>{_table(['id','title','thesis','evidence','expected_edge','confidence','invalidation_rule','status','linked_key','updated_at'], top_hypotheses)}</section>
+    </div>
+
+    <section><h2>Recent Experiments</h2>{_table(['id','hypothesis_id','allocated_budget','result_pnl','result_return_pct','outcome','failure_reason','notes','started_at','completed_at'], experiments)}</section>
+
+    <div class="grid">
+      <section><h2>Team KPI</h2>{_table(['assignee', 'task_count', 'revenue', 'cost', 'profit'], kpi_rows)}</section>
       <section><h2>최근 시스템 이벤트</h2>{_table(['id', 'event_type', 'details', 'created_at'], events)}</section>
     </div>
 
@@ -179,7 +195,16 @@ def create_handler(store: SQLiteStore, config: DashboardConfig):
                 return
             parsed = urlparse(self.path)
             if parsed.path == "/api/summary":
-                self._send_json({"metrics": store.summary_metrics(), "team_kpis": [k.__dict__ for k in store.team_kpis()]})
+                self._send_json(
+                    {
+                        "metrics": store.summary_metrics(),
+                        "team_kpis": [k.__dict__ for k in store.team_kpis()],
+                        "hypothesis_status_counts": store.hypothesis_status_counts(),
+                        "recent_experiments": store.recent_experiment_runs(10),
+                        "top_hypotheses": store.top_hypotheses_by_confidence(10),
+                        "lab_summary": store.lab_summary(),
+                    }
+                )
                 return
             if parsed.path != "/":
                 self.send_response(HTTPStatus.NOT_FOUND)

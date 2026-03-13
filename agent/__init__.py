@@ -8,6 +8,7 @@ from .brokers import (
     UnifiedBroker,
     ValidationResult,
 )
+from .lab import LabConfig, OpportunityFactory, StrategyLab
 from .llm import LLMProvider, create_llm_client, default_model
 from .models import AgentState, Opportunity, OpportunityType
 from .persistence import SQLiteStore, TeamKPI
@@ -32,6 +33,7 @@ __all__ = [
     "BrokerConfig",
     "create_llm_client",
     "default_model",
+    "LabConfig",
     "LLMBrowser",
     "LLMShell",
     "LLMProvider",
@@ -40,6 +42,7 @@ __all__ = [
     "MockBrowser",
     "MockShell",
     "Opportunity",
+    "OpportunityFactory",
     "OpportunityType",
     "OrderResult",
     "ValidationResult",
@@ -49,6 +52,7 @@ __all__ = [
     "RuntimeConfig",
     "SQLiteStore",
     "StrategyEngine",
+    "StrategyLab",
     "SubAgent",
     "TeamKPI",
     "UnifiedBroker",

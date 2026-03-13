@@ -27,6 +27,17 @@ class Opportunity:
     risk_score: float  # 0.0(low) ~ 1.0(high)
     opportunity_type: OpportunityType = OpportunityType.BUSINESS
     symbol: str = ""
+    confidence_score: float = 0.5
+    evidence_score: float = 0.5
+    execution_complexity: float = 0.5
+    repeatability_score: float = 0.5
+    time_to_payout: float = 0.5
+
+    @property
+    def expected_edge(self) -> float:
+        if self.required_budget <= 0:
+            return 0.0
+        return (self.expected_return - self.required_budget) / self.required_budget
 
 
 @dataclass

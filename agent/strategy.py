@@ -13,20 +13,38 @@ class RiskPolicy:
 
 
 class StrategyEngine:
-    """Conway Research Automaton 스타일의 기회 탐색/우선순위 엔진(단순화 버전)."""
+    """Conway Research Automaton 스타일 기회 선택 엔진 (다요인 스코어링)."""
 
     def __init__(self, policy: RiskPolicy | None = None) -> None:
         self.policy = policy or RiskPolicy()
+
+    def score(self, op: Opportunity) -> float:
+        # 각 요소를 0~1 유사 범위로 정규화한 단순 가중치 모델.
+        edge_score = max(-1.0, min(2.0, op.expected_edge))
+        budget_efficiency = 1.0 / (1.0 + (op.required_budget / 300.0))
+        risk_component = 1.0 - max(0.0, min(1.0, op.risk_score))
+        confidence = max(0.0, min(1.0, op.confidence_score))
+        evidence = max(0.0, min(1.0, op.evidence_score))
+        complexity_component = 1.0 - max(0.0, min(1.0, op.execution_complexity))
+        repeatability = max(0.0, min(1.0, op.repeatability_score))
+        payout_speed = 1.0 - max(0.0, min(1.0, op.time_to_payout))
+
+        return (
+            (edge_score * 0.24)
+            + (budget_efficiency * 0.10)
+            + (risk_component * 0.14)
+            + (confidence * 0.18)
+            + (evidence * 0.10)
+            + (complexity_component * 0.08)
+            + (repeatability * 0.10)
+            + (payout_speed * 0.06)
+        )
 
     def select(self, opportunities: Iterable[Opportunity], state: AgentState) -> List[Task]:
         reserve_cash = state.starting_budget * self.policy.reserve_ratio
         usable_cash = max(0.0, state.cash - reserve_cash)
 
-        ranked = sorted(
-            opportunities,
-            key=lambda x: (x.expected_return - x.required_budget, -x.risk_score),
-            reverse=True,
-        )
+        ranked = sorted(opportunities, key=self.score, reverse=True)
 
         tasks: List[Task] = []
         for idx, op in enumerate(ranked, start=1):
@@ -35,17 +53,20 @@ class StrategyEngine:
             if op.required_budget > usable_cash:
                 continue
 
-            tasks.append(
-                Task(
-                    id=idx,
-                    title=f"{op.name} 실행",
-                    action_plan=self._build_action_plan(op),
-                    estimated_cost=op.required_budget,
-                    expected_revenue=op.expected_return,
-                    channel=op.opportunity_type,
-                    instrument=op.symbol,
-                )
+            task = Task(
+                id=idx,
+                title=f"{op.name} 실행",
+                action_plan=self._build_action_plan(op),
+                estimated_cost=op.required_budget,
+                expected_revenue=op.expected_return,
+                channel=op.opportunity_type,
+                instrument=op.symbol,
+                notes=(
+                    f"score={self.score(op):.4f};confidence={op.confidence_score:.2f};"
+                    f"evidence={op.evidence_score:.2f};edge={op.expected_edge:.4f}"
+                ),
             )
+            tasks.append(task)
             usable_cash -= op.required_budget
         return tasks
 

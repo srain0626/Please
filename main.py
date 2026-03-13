@@ -9,11 +9,13 @@ from agent import (
     LLMBrowser,
     LLMShell,
     LLMProvider,
+    LabConfig,
     Opportunity,
     OpportunityType,
     RuntimeConfig,
     SQLiteStore,
     StrategyEngine,
+    StrategyLab,
     SubAgent,
     UnifiedBroker,
     create_llm_client,
@@ -30,6 +32,11 @@ def sample_opportunities() -> list[Opportunity]:
             expected_return=500.0,
             risk_score=0.3,
             opportunity_type=OpportunityType.BUSINESS,
+            confidence_score=0.55,
+            evidence_score=0.45,
+            execution_complexity=0.55,
+            repeatability_score=0.65,
+            time_to_payout=0.75,
         ),
         Opportunity(
             name="미국 대형주 스윙 전략",
@@ -39,6 +46,11 @@ def sample_opportunities() -> list[Opportunity]:
             risk_score=0.35,
             opportunity_type=OpportunityType.STOCK,
             symbol="AAPL",
+            confidence_score=0.6,
+            evidence_score=0.52,
+            execution_complexity=0.4,
+            repeatability_score=0.7,
+            time_to_payout=0.55,
         ),
         Opportunity(
             name="비트코인 모멘텀 전략",
@@ -48,6 +60,11 @@ def sample_opportunities() -> list[Opportunity]:
             risk_score=0.45,
             opportunity_type=OpportunityType.CRYPTO,
             symbol="BTC-USDT",
+            confidence_score=0.58,
+            evidence_score=0.5,
+            execution_complexity=0.45,
+            repeatability_score=0.68,
+            time_to_payout=0.45,
         ),
     ]
 
@@ -84,6 +101,13 @@ def parse_args() -> argparse.Namespace:
         default=0.6,
         help="Max exposure per market (stock/crypto) as ratio of starting budget",
     )
+    parser.add_argument(
+        "--exploratory-budget-ratio",
+        type=float,
+        default=0.15,
+        help="Budget ratio reserved for hypothesis experiments",
+    )
+    parser.add_argument("--lab-cycles", type=int, default=2, help="How many strategy-lab research cycles to run")
     parser.add_argument("--db-path", default="agent_state.db", help="SQLite persistence path")
     return parser.parse_args()
 
@@ -97,6 +121,20 @@ def main() -> None:
     state = AgentState(starting_budget=args.budget, cash=args.budget)
     team = build_default_team()
     store = SQLiteStore(db_path=args.db_path)
+
+    lab = StrategyLab(
+        store=store,
+        config=LabConfig(
+            exploratory_budget_ratio=args.exploratory_budget_ratio,
+            max_experiments_per_cycle=4,
+        ),
+    )
+    promoted_opportunities: list[Opportunity] = []
+    seed = sample_opportunities()
+    for _ in range(max(1, args.lab_cycles)):
+        promoted_opportunities = lab.research_and_promote(state=state, seed_opportunities=seed)
+        seed = promoted_opportunities or seed
+
     runtime = AgentRuntime(
         strategy=StrategyEngine(),
         browser=LLMBrowser(llm),
@@ -112,12 +150,13 @@ def main() -> None:
         ),
     )
 
-    result = runtime.run(state, sample_opportunities())
+    result = runtime.run(state, promoted_opportunities)
     print("=== Autonomous Profit Agent Report ===")
     print(f"provider: {provider.value}")
     print(f"model: {model}")
     print(f"lead_agent: {team.lead_name}")
     print(f"team_size: {len(team.members)}")
+    print(f"promoted_opportunities: {len(promoted_opportunities)}")
     print(f"cash: {result.cash:.2f}")
     print(f"revenue: {result.revenue:.2f}")
     print(f"cost: {result.cost:.2f}")
