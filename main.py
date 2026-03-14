@@ -5,6 +5,7 @@ import argparse
 from agent import (
     AgentRuntime,
     AllocationOptimizer,
+    OfferSelfImprovementLoop,
     AgentState,
     AgentTeam,
     AutomationCandidateDetector,
@@ -367,6 +368,7 @@ def main() -> None:
     seed_allocation_policies(store)
     run_distribution_loop(store)
     AllocationOptimizer(store).generate_recommendations()
+    OfferSelfImprovementLoop(store).run()
 
     lab = StrategyLab(
         store=store,

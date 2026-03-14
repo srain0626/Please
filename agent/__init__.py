@@ -35,6 +35,7 @@ from .runtime import (
     SubAgent,
 )
 from .strategy import RiskPolicy, StrategyEngine
+from .self_improvement import OfferSelfImprovementLoop, VariantGenerator, VariantPerformanceComparator
 
 __all__ = [
     "AllocationScoringEngine",
@@ -80,5 +81,8 @@ __all__ = [
     "StrategyLab",
     "SubAgent",
     "TeamKPI",
+    "VariantPerformanceComparator",
+    "VariantGenerator",
+    "OfferSelfImprovementLoop",
     "UnifiedBroker",
 ]

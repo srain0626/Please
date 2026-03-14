@@ -179,3 +179,14 @@ python -m unittest discover -s tests -v
 - Added recommendation registry (`allocation_recommendations`) with types like increase/decrease/pause/promote/retire/switch-mode and auto-applied flag.
 - Added optimizer (`AllocationOptimizer`) that generates reallocation recommendations and feeds results back into mechanism confidence/repeatability.
 - Dashboard/API now expose allocation policies, variant tables, score breakdown, performance summaries, recommendations, and auto-applied history.
+
+
+## Offer Generation & Self-Improvement Loop
+
+- Added rule-based `VariantGenerator` that creates challenger variants using headline/CTA/length/structure/execution-mode mutations.
+- Added `variant_experiment_queue` to stage variants under controlled small-trial experiments (`queued/testing/promoted/retired/blocked`).
+- Added `VariantPerformanceComparator` with minimum-trial guard and small-sample penalty for safer promotion decisions.
+- Added promotion/retirement lifecycle rules in `OfferSelfImprovementLoop` (`proposed/testing/promoted/incumbent/retired/archived`) with explicit rationale persistence.
+- Added `creative_recommendations` for blueprint/template defaults and creative strategy updates (`update_blueprint_default`, `switch_default_execution_mode`, etc.).
+- Added safe generation caps by target testing concurrency, mechanism generation rate, mechanism confidence, and token-budget checks.
+- Dashboard/API now expose experiment queue, base-vs-challenger comparisons, creative recommendations, blocked generation counts, and optimization history.

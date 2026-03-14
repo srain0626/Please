@@ -11,7 +11,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from agent import AllocationScoringEngine, SQLiteStore
+from agent import AllocationScoringEngine, SQLiteStore, VariantPerformanceComparator
 
 LOGGER = logging.getLogger("agent-dashboard")
 
@@ -74,6 +74,29 @@ def render_dashboard(store: SQLiteStore, flash: str = "") -> str:
     perf_by_variant = store.performance_summary(dimension="variant", limit=30)
     scoring_engine = AllocationScoringEngine(store)
     channel_scores = scoring_engine.score_dimension("channel", limit=20)
+    variant_queue = store.list_variant_experiment_queue(limit=30)
+    creative_recommendations = store.list_creative_recommendations(limit=30)
+    comparator = VariantPerformanceComparator(store)
+    variants_by_target: dict[int, list[tuple]] = {}
+    for v in variants:
+        variants_by_target.setdefault(int(v[1]), []).append(v)
+    variant_comparisons: list[tuple] = []
+    for target_id, items in variants_by_target.items():
+        if len(items) < 2:
+            continue
+        incumbent = next((x for x in items if str(x[5]).lower() in {"incumbent", "promoted"}), items[0])
+        for challenger in items[1:3]:
+            cmp = comparator.compare(int(incumbent[0]), int(challenger[0]), min_trials=3)
+            variant_comparisons.append((
+                cmp.incumbent_variant_id,
+                cmp.challenger_variant_id,
+                cmp.incumbent_score,
+                cmp.challenger_score,
+                cmp.score_delta,
+                cmp.min_trials_guard,
+                cmp.small_sample_penalty,
+                cmp.rationale,
+            ))
 
     kpi_rows = [(k.assignee, k.task_count, round(k.revenue, 2), round(k.cost, 2), round(k.profit, 2)) for k in kpis]
 
@@ -134,6 +157,9 @@ def render_dashboard(store: SQLiteStore, flash: str = "") -> str:
       <div class="card"><div class="k">Offer Variants</div><div class="v">{metrics['offer_variant_count']}</div></div>
       <div class="card"><div class="k">Recommendations</div><div class="v">{metrics['allocation_recommendation_count']}</div></div>
       <div class="card"><div class="k">Auto Applied Realloc</div><div class="v">{metrics['auto_applied_recommendation_count']}</div></div>
+      <div class="card"><div class="k">Variant Queue</div><div class="v">{metrics['variant_queue_count']}</div></div>
+      <div class="card"><div class="k">Creative Recs</div><div class="v">{metrics['creative_recommendation_count']}</div></div>
+      <div class="card"><div class="k">Blocked Generations</div><div class="v">{metrics['blocked_variant_queue_count']}</div></div>
     </div>
 
     <section>
@@ -190,7 +216,7 @@ def render_dashboard(store: SQLiteStore, flash: str = "") -> str:
     <section><h2>Execution Mode Usage</h2>{_table(['mode','count'], execution_mode_usage)}</section>
     <section><h2>Distribution Targets</h2>{_table(['id','mechanism_id','blueprint_id','asset_id','target_type','title','summary','payload_json','status','created_at'], distribution_targets)}</section>
     <section><h2>Distribution Channels</h2>{_table(['id','channel_type','name','description','config_json','is_active','created_at'], distribution_channels)}</section>
-    <section><h2>Recent Distribution Runs</h2>{_table(['id','target_id','channel_id','mechanism_id','execution_mode','status','external_ref','submitted_at','completed_at','notes'], distribution_runs)}</section>
+    <section><h2>Recent Distribution Runs</h2>{_table(['id','target_id','channel_id','mechanism_id','execution_mode','status','external_ref','submitted_at','completed_at','notes','variant_id'], distribution_runs)}</section>
     <section><h2>Conversion Events</h2>{_table(['id','run_id','target_id','mechanism_id','event_type','value_estimate','metadata_json','occurred_at'], conversion_events)}</section>
     <section><h2>Channel Conversion Metrics</h2>{_table(['channel','submitted','response_rate','conversion_rate','revenue_estimate'], channel_conversion)}</section>
     <section><h2>Mechanism Conversion Metrics</h2>{_table(['id','type','title','conversions','revenue_estimate'], mechanism_conversion)}</section>
@@ -198,6 +224,9 @@ def render_dashboard(store: SQLiteStore, flash: str = "") -> str:
     <section><h2>Distribution Token Efficiency</h2>{_table(['conversion_count','estimated_revenue','token_spend_estimate','revenue_per_token'], [(dist_token_efficiency['conversion_count'], dist_token_efficiency['estimated_revenue'], dist_token_efficiency['token_spend_estimate'], dist_token_efficiency['revenue_per_token'])])}</section>
     <section><h2>Allocation Policies</h2>{_table(['id','mechanism_id','channel_id','target_type','execution_mode','base_weight','min_trials','max_trials','cooldown_hours','is_active','updated_at'], allocation_policies)}</section>
     <section><h2>Offer Variants</h2>{_table(['id','target_id','variant_key','title','payload_patch_json','status','created_at'], variants)}</section>
+    <section><h2>Variant Experiment Queue</h2>{_table(['id','variant_id','target_id','mechanism_id','channel_id','planned_trial_count','max_trial_count','priority','status','created_at','updated_at'], variant_queue)}</section>
+    <section><h2>Base vs Challenger Comparisons</h2>{_table(['incumbent_variant_id','challenger_variant_id','incumbent_score','challenger_score','score_delta','min_trials_guard','small_sample_penalty','rationale'], variant_comparisons)}</section>
+    <section><h2>Creative Improvement Recommendations</h2>{_table(['id','mechanism_id','target_type','variant_id','blueprint_id','asset_id','recommendation_type','rationale','expected_impact','confidence','status','created_at'], creative_recommendations)}</section>
     <section><h2>Channel Allocation Score Breakdown</h2>{_table(['channel_key','score','conversion_rate','response_rate','est_revenue','revenue_per_token','failure_rate','no_response_rate','repeatability','automation_potential','execution_cost','token_cost'], [(x.key, x.score, x.conversion_rate, x.response_rate, x.estimated_revenue, x.revenue_per_token, x.failure_rate, x.no_response_rate, x.repeatability_score, x.automation_potential, x.execution_cost, x.token_cost) for x in channel_scores])}</section>
     <section><h2>Performance by Channel</h2>{_table(['key','submissions','deliveries','responses','conversions','estimated_revenue','response_rate','conversion_rate','revenue_per_run','revenue_per_token','conversion_per_token','failure_rate','no_response_rate','repeatability','automation','execution_cost','token_cost'], perf_by_channel)}</section>
     <section><h2>Performance by Mechanism</h2>{_table(['key','submissions','deliveries','responses','conversions','estimated_revenue','response_rate','conversion_rate','revenue_per_run','revenue_per_token','conversion_per_token','failure_rate','no_response_rate','repeatability','automation','execution_cost','token_cost'], perf_by_mechanism)}</section>
@@ -295,6 +324,8 @@ def create_handler(store: SQLiteStore, config: DashboardConfig):
                         "performance_by_execution_mode": store.performance_summary(dimension="execution_mode", limit=50),
                         "performance_by_variant": store.performance_summary(dimension="variant", limit=50),
                         "allocation_channel_scores": [x.__dict__ for x in AllocationScoringEngine(store).score_dimension("channel", limit=50)],
+                        "variant_experiment_queue": store.list_variant_experiment_queue(limit=50),
+                        "creative_recommendations": store.list_creative_recommendations(limit=50),
                     }
                 )
                 return

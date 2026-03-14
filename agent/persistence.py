@@ -54,6 +54,21 @@ ALLOCATION_RECOMMENDATION_TYPES = {
 }
 ALLOCATION_RECOMMENDATION_STATUSES = {"pending", "auto_applied", "accepted", "rejected", "done"}
 
+VARIANT_EXPERIMENT_STATUSES = {"queued", "testing", "promoted", "retired", "blocked"}
+VARIANT_LIFECYCLE_STATUSES = {"proposed", "testing", "promoted", "incumbent", "retired", "archived"}
+CREATIVE_RECOMMENDATION_TYPES = {
+    "promote_variant",
+    "retire_variant",
+    "change_default_headline_style",
+    "change_default_cta_style",
+    "switch_default_execution_mode",
+    "shorten_content",
+    "lengthen_content",
+    "revise_structure",
+    "update_blueprint_default",
+    "update_template_asset",
+}
+
 
 @dataclass
 class TeamKPI:
@@ -440,6 +455,41 @@ class SQLiteStore:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS variant_experiment_queue (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    variant_id INTEGER,
+                    target_id INTEGER,
+                    mechanism_id INTEGER,
+                    channel_id INTEGER,
+                    planned_trial_count INTEGER,
+                    max_trial_count INTEGER,
+                    priority REAL,
+                    status TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS creative_recommendations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    mechanism_id INTEGER,
+                    target_type TEXT,
+                    variant_id INTEGER,
+                    blueprint_id INTEGER,
+                    asset_id INTEGER,
+                    recommendation_type TEXT,
+                    rationale TEXT,
+                    expected_impact REAL,
+                    confidence REAL,
+                    status TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
 
     def _validate_limit(self, limit: int) -> int:
         return max(1, min(limit, 1000))
@@ -522,6 +572,25 @@ class SQLiteStore:
         normalized = status.lower().strip()
         if normalized not in ALLOCATION_RECOMMENDATION_STATUSES:
             raise ValueError(f"invalid recommendation status: {status}")
+        return normalized
+
+
+    def _validate_variant_experiment_status(self, status: str) -> str:
+        normalized = status.lower().strip()
+        if normalized not in VARIANT_EXPERIMENT_STATUSES:
+            raise ValueError(f"invalid variant experiment status: {status}")
+        return normalized
+
+    def _validate_variant_lifecycle_status(self, status: str) -> str:
+        normalized = status.lower().strip()
+        if normalized not in VARIANT_LIFECYCLE_STATUSES:
+            raise ValueError(f"invalid variant lifecycle status: {status}")
+        return normalized
+
+    def _validate_creative_recommendation_type(self, recommendation_type: str) -> str:
+        normalized = recommendation_type.lower().strip()
+        if normalized not in CREATIVE_RECOMMENDATION_TYPES:
+            raise ValueError(f"invalid creative recommendation type: {recommendation_type}")
         return normalized
 
     def record_task_run(self, task: Task, assignee: str, realized_revenue: float) -> None:
@@ -2000,6 +2069,230 @@ class SQLiteStore:
             )
         return results
 
+
+    def enqueue_variant_experiment(
+        self,
+        *,
+        variant_id: int,
+        target_id: int,
+        mechanism_id: int,
+        channel_id: int | None,
+        planned_trial_count: int,
+        max_trial_count: int,
+        priority: float,
+        status: str,
+    ) -> int:
+        valid_status = self._validate_variant_experiment_status(status)
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO variant_experiment_queue(
+                    variant_id, target_id, mechanism_id, channel_id, planned_trial_count,
+                    max_trial_count, priority, status
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    variant_id,
+                    target_id,
+                    mechanism_id,
+                    channel_id,
+                    planned_trial_count,
+                    max_trial_count,
+                    priority,
+                    valid_status,
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_variant_experiment_queue(self, limit: int = 100, statuses: list[str] | None = None) -> list[tuple]:
+        safe_limit = self._validate_limit(limit)
+        with self._connect() as conn:
+            if statuses:
+                normalized = [self._validate_variant_experiment_status(x) for x in statuses]
+                placeholders = ','.join('?' for _ in normalized)
+                return conn.execute(
+                    f"""
+                    SELECT id, variant_id, target_id, mechanism_id, channel_id, planned_trial_count,
+                           max_trial_count, priority, status, created_at, updated_at
+                    FROM variant_experiment_queue
+                    WHERE status IN ({placeholders})
+                    ORDER BY priority DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (*normalized, safe_limit),
+                ).fetchall()
+            return conn.execute(
+                """
+                SELECT id, variant_id, target_id, mechanism_id, channel_id, planned_trial_count,
+                       max_trial_count, priority, status, created_at, updated_at
+                FROM variant_experiment_queue
+                ORDER BY priority DESC, id DESC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+
+    def update_variant_experiment_status(self, queue_id: int, status: str) -> bool:
+        valid_status = self._validate_variant_experiment_status(status)
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE variant_experiment_queue SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (valid_status, queue_id),
+            )
+        return cur.rowcount > 0
+
+    def update_offer_variant_status(self, variant_id: int, status: str) -> bool:
+        valid_status = self._validate_variant_lifecycle_status(status)
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE offer_variants SET status=? WHERE id=?",
+                (valid_status, variant_id),
+            )
+        return cur.rowcount > 0
+
+    def variant_metrics(self, variant_id: int) -> tuple:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    COUNT(DISTINCT r.id) AS submissions,
+                    COALESCE(SUM(CASE WHEN e.event_type IN ('reply','lead_captured','proposal_accepted','sale') THEN 1 ELSE 0 END), 0) AS responses,
+                    COALESCE(SUM(CASE WHEN e.event_type IN ('proposal_accepted','sale') THEN 1 ELSE 0 END), 0) AS conversions,
+                    COALESCE(SUM(e.value_estimate), 0) AS revenue,
+                    COALESCE(SUM(CASE WHEN r.status='failed' OR e.event_type='rejected' THEN 1 ELSE 0 END), 0) AS failures,
+                    COALESCE(SUM(CASE WHEN e.event_type='no_response' THEN 1 ELSE 0 END), 0) AS no_responses,
+                    COALESCE(AVG(el.estimated_token_cost), 0) AS token_cost
+                FROM distribution_runs r
+                LEFT JOIN conversion_events e ON e.run_id = r.id
+                LEFT JOIN execution_route_logs el ON el.task_id = r.id
+                WHERE r.variant_id=?
+                """,
+                (variant_id,),
+            ).fetchone()
+        submissions = int(row[0]) if row else 0
+        responses = int(row[1]) if row else 0
+        conversions = int(row[2]) if row else 0
+        revenue = float(row[3]) if row else 0.0
+        failures = int(row[4]) if row else 0
+        no_responses = int(row[5]) if row else 0
+        token_cost = float(row[6]) if row else 0.0
+        response_rate = responses / submissions if submissions else 0.0
+        conversion_rate = conversions / submissions if submissions else 0.0
+        failure_rate = failures / submissions if submissions else 0.0
+        no_response_rate = no_responses / submissions if submissions else 0.0
+        revenue_per_token = revenue / token_cost if token_cost > 0 else 0.0
+        return (
+            submissions,
+            response_rate,
+            conversion_rate,
+            revenue,
+            revenue_per_token,
+            failure_rate,
+            no_response_rate,
+            token_cost,
+        )
+
+    def record_creative_recommendation(
+        self,
+        *,
+        mechanism_id: int | None,
+        target_type: str | None,
+        variant_id: int | None,
+        blueprint_id: int | None,
+        asset_id: int | None,
+        recommendation_type: str,
+        rationale: str,
+        expected_impact: float,
+        confidence: float,
+        status: str = 'pending',
+    ) -> int:
+        rec_type = self._validate_creative_recommendation_type(recommendation_type)
+        normalized_target = self._validate_distribution_target_type(target_type) if target_type else None
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO creative_recommendations(
+                    mechanism_id, target_type, variant_id, blueprint_id, asset_id,
+                    recommendation_type, rationale, expected_impact, confidence, status
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    mechanism_id,
+                    normalized_target,
+                    variant_id,
+                    blueprint_id,
+                    asset_id,
+                    rec_type,
+                    rationale,
+                    expected_impact,
+                    max(0.0, min(1.0, confidence)),
+                    status,
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_creative_recommendations(self, limit: int = 100) -> list[tuple]:
+        safe_limit = self._validate_limit(limit)
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT id, mechanism_id, target_type, variant_id, blueprint_id, asset_id,
+                       recommendation_type, rationale, expected_impact, confidence, status, created_at
+                FROM creative_recommendations
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+
+    def variant_generation_block_reason(
+        self,
+        *,
+        mechanism_id: int,
+        target_id: int,
+        max_testing_per_target: int,
+        max_generated_per_mechanism_window: int,
+        lookback_hours: int,
+        min_mechanism_confidence: float,
+        max_token_budget: float,
+    ) -> str | None:
+        with self._connect() as conn:
+            testing = conn.execute(
+                "SELECT COUNT(*) FROM variant_experiment_queue WHERE target_id=? AND status IN ('queued','testing')",
+                (target_id,),
+            ).fetchone()
+            if testing and int(testing[0]) >= max_testing_per_target:
+                return 'target_testing_cap'
+
+            generated = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM offer_variants
+                WHERE target_id IN (
+                    SELECT id FROM distribution_targets WHERE mechanism_id=?
+                )
+                AND created_at >= DATETIME('now', ?)
+                """,
+                (mechanism_id, f'-{lookback_hours} hours'),
+            ).fetchone()
+            if generated and int(generated[0]) >= max_generated_per_mechanism_window:
+                return 'mechanism_generation_rate_cap'
+
+            confidence_row = conn.execute(
+                "SELECT confidence_score, expected_token_cost FROM income_mechanisms WHERE id=?",
+                (mechanism_id,),
+            ).fetchone()
+            if confidence_row:
+                confidence = float(confidence_row[0])
+                expected_token_cost = float(confidence_row[1])
+                if confidence < min_mechanism_confidence:
+                    return 'low_confidence_mechanism'
+                if expected_token_cost > max_token_budget:
+                    return 'token_budget_exceeded'
+        return None
+
     # ===== Existing Metrics/API Helpers =====
     def summary_metrics(self) -> dict[str, float]:
         with self._connect() as conn:
@@ -2041,6 +2334,9 @@ class SQLiteStore:
             offer_variant_count = conn.execute("SELECT COUNT(*) FROM offer_variants").fetchone()
             allocation_recommendation_count = conn.execute("SELECT COUNT(*) FROM allocation_recommendations").fetchone()
             auto_applied_recommendation_count = conn.execute("SELECT COUNT(*) FROM allocation_recommendations WHERE auto_applied=1").fetchone()
+            variant_queue_count = conn.execute("SELECT COUNT(*) FROM variant_experiment_queue").fetchone()
+            creative_recommendation_count = conn.execute("SELECT COUNT(*) FROM creative_recommendations").fetchone()
+            blocked_variant_queue_count = conn.execute("SELECT COUNT(*) FROM variant_experiment_queue WHERE status='blocked'").fetchone()
             execution_savings = self.execution_savings_summary()
 
         revenue = float(row[0]) if row else 0.0
@@ -2067,6 +2363,9 @@ class SQLiteStore:
             "offer_variant_count": int(offer_variant_count[0]) if offer_variant_count else 0,
             "allocation_recommendation_count": int(allocation_recommendation_count[0]) if allocation_recommendation_count else 0,
             "auto_applied_recommendation_count": int(auto_applied_recommendation_count[0]) if auto_applied_recommendation_count else 0,
+            "variant_queue_count": int(variant_queue_count[0]) if variant_queue_count else 0,
+            "creative_recommendation_count": int(creative_recommendation_count[0]) if creative_recommendation_count else 0,
+            "blocked_variant_queue_count": int(blocked_variant_queue_count[0]) if blocked_variant_queue_count else 0,
             "replaced_llm_count": int(execution_savings.get("replaced_llm_count", 0)),
             "estimated_token_savings": int(execution_savings.get("estimated_token_savings", 0)),
             "escalation_count": int(execution_savings.get("escalation_count", 0)),
