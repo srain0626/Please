@@ -212,3 +212,13 @@ python -m unittest discover -s tests -v
 
 - `agent/brokers.py`의 메리츠 live 서명은 운영 전 최신 공식 문서의 헤더/파라미터 요구사항으로 최종 보정해야 합니다.
 - Binance는 signed endpoint 기본 흐름(HMAC, timestamp, recvWindow)을 반영했지만, 실거래 전 주문 수량/정밀도/규정 필터(`LOT_SIZE`, `MIN_NOTIONAL`) 검증이 추가로 필요합니다.
+
+
+## Distribution & Conversion Loop
+
+- Distribution target registry for `blog_post`, `freelance_proposal`, `automation_offer`, `digital_product_offer`, `lead_list`, `outreach_message`.
+- Channel registry for `blog`, `email`, `marketplace`, `landing_page`, `social`, `direct_outreach`.
+- Distribution run tracking and conversion event persistence (impression/click/reply/lead/sale/rejected/no_response).
+- Stub adapters (`BlogChannelAdapterStub`, `OutreachChannelAdapterStub`, `MarketplaceChannelAdapterStub`) to simulate external distribution without network dependencies.
+- Feedback integration updates mechanism confidence/repeatability and recent hypothesis confidence from conversion outcomes.
+- Dashboard/API now expose distribution targets/channels/runs/events and conversion metrics by channel/mechanism/target type plus token efficiency.

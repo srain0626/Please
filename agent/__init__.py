@@ -1,5 +1,12 @@
 from .automation import AutomationCandidateDetector, apply_candidate_transition
 from .execution import ExecutionContext, ExecutionResult, ExecutionRouter
+from .distribution import (
+    BlogChannelAdapterStub,
+    DistributionResult,
+    MarketplaceChannelAdapterStub,
+    OutreachChannelAdapterStub,
+    adapter_for_channel_type,
+)
 from .brokers import (
     BinanceBroker,
     BrokerConfig,
@@ -35,6 +42,11 @@ __all__ = [
     "ExecutionContext",
     "ExecutionResult",
     "ExecutionRouter",
+    "adapter_for_channel_type",
+    "DistributionResult",
+    "MarketplaceChannelAdapterStub",
+    "OutreachChannelAdapterStub",
+    "BlogChannelAdapterStub",
     "AgentTeam",
     "BinanceBroker",
     "BrokerConfig",

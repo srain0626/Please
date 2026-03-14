@@ -58,6 +58,14 @@ def render_dashboard(store: SQLiteStore, flash: str = "") -> str:
     execution_routes = store.recent_execution_routes(30)
     execution_mode_usage = store.execution_mode_usage()
     execution_savings = store.execution_savings_summary()
+    distribution_targets = store.list_distribution_targets(30)
+    distribution_channels = store.list_distribution_channels(30)
+    distribution_runs = store.list_distribution_runs(30)
+    conversion_events = store.list_conversion_events(30)
+    channel_conversion = store.conversion_metrics_by_channel()
+    mechanism_conversion = store.conversion_metrics_by_mechanism()
+    target_conversion = store.conversion_metrics_by_target_type()
+    dist_token_efficiency = store.distribution_token_efficiency()
 
     kpi_rows = [(k.assignee, k.task_count, round(k.revenue, 2), round(k.cost, 2), round(k.profit, 2)) for k in kpis]
 
@@ -109,6 +117,11 @@ def render_dashboard(store: SQLiteStore, flash: str = "") -> str:
       <div class="card"><div class="k">Token Cost (USD)</div><div class="v">{token_summary['token_cost_usd']:.2f}</div></div>
       <div class="card"><div class="k">LLM Replaced</div><div class="v">{execution_savings['replaced_llm_count']}</div></div>
       <div class="card"><div class="k">Token Savings (est)</div><div class="v">{execution_savings['estimated_token_savings']}</div></div>
+      <div class="card"><div class="k">Distribution Targets</div><div class="v">{metrics['distribution_target_count']}</div></div>
+      <div class="card"><div class="k">Channels</div><div class="v">{metrics['distribution_channel_count']}</div></div>
+      <div class="card"><div class="k">Distribution Runs</div><div class="v">{metrics['distribution_run_count']}</div></div>
+      <div class="card"><div class="k">Conversion Events</div><div class="v">{metrics['conversion_event_count']}</div></div>
+      <div class="card"><div class="k">Conv Revenue / Token</div><div class="v">{dist_token_efficiency['revenue_per_token']:.4f}</div></div>
     </div>
 
     <section>
@@ -163,6 +176,14 @@ def render_dashboard(store: SQLiteStore, flash: str = "") -> str:
     <section><h2>Order Executions</h2>{_table(['id','client_order_id','broker','order_id','status','raw_response','created_at'], executions)}</section>
     <section><h2>KPI Snapshots</h2>{_table(['id','assignee','task_count','revenue','cost','profit','created_at'], snapshots)}</section>
     <section><h2>Execution Mode Usage</h2>{_table(['mode','count'], execution_mode_usage)}</section>
+    <section><h2>Distribution Targets</h2>{_table(['id','mechanism_id','blueprint_id','asset_id','target_type','title','summary','payload_json','status','created_at'], distribution_targets)}</section>
+    <section><h2>Distribution Channels</h2>{_table(['id','channel_type','name','description','config_json','is_active','created_at'], distribution_channels)}</section>
+    <section><h2>Recent Distribution Runs</h2>{_table(['id','target_id','channel_id','mechanism_id','execution_mode','status','external_ref','submitted_at','completed_at','notes'], distribution_runs)}</section>
+    <section><h2>Conversion Events</h2>{_table(['id','run_id','target_id','mechanism_id','event_type','value_estimate','metadata_json','occurred_at'], conversion_events)}</section>
+    <section><h2>Channel Conversion Metrics</h2>{_table(['channel','submitted','response_rate','conversion_rate','revenue_estimate'], channel_conversion)}</section>
+    <section><h2>Mechanism Conversion Metrics</h2>{_table(['id','type','title','conversions','revenue_estimate'], mechanism_conversion)}</section>
+    <section><h2>Target Type Performance</h2>{_table(['target_type','runs','conversions','revenue_estimate'], target_conversion)}</section>
+    <section><h2>Distribution Token Efficiency</h2>{_table(['conversion_count','estimated_revenue','token_spend_estimate','revenue_per_token'], [(dist_token_efficiency['conversion_count'], dist_token_efficiency['estimated_revenue'], dist_token_efficiency['token_spend_estimate'], dist_token_efficiency['revenue_per_token'])])}</section>
     <section><h2>Recent Execution Routes</h2>{_table(['id','task_id','task_type','mechanism_type','selected_mode','fallback_mode','reason','token_cost','token_savings','escalated','status','created_at'], execution_routes)}</section>
   </div>
 </body>
@@ -238,6 +259,14 @@ def create_handler(store: SQLiteStore, config: DashboardConfig):
                         "recent_execution_routes": store.recent_execution_routes(50),
                         "execution_mode_usage": store.execution_mode_usage(),
                         "execution_savings_summary": store.execution_savings_summary(),
+                        "distribution_targets": store.list_distribution_targets(50),
+                        "distribution_channels": store.list_distribution_channels(50),
+                        "distribution_runs": store.list_distribution_runs(50),
+                        "conversion_events": store.list_conversion_events(50),
+                        "channel_conversion_metrics": store.conversion_metrics_by_channel(),
+                        "mechanism_conversion_metrics": store.conversion_metrics_by_mechanism(),
+                        "target_conversion_metrics": store.conversion_metrics_by_target_type(),
+                        "distribution_token_efficiency": store.distribution_token_efficiency(),
                     }
                 )
                 return

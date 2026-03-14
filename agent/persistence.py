@@ -22,6 +22,26 @@ HYPOTHESIS_STATUSES = {"proposed", "testing", "validated", "rejected", "archived
 MECHANISM_STATUSES = {"active", "paused", "deprecated", "testing"}
 AUTOMATION_CANDIDATE_STATUSES = {"proposed", "evaluating", "active", "paused", "retired"}
 EXECUTION_MODES = {"llm_direct", "prompt_template", "rule_based", "code_based"}
+DISTRIBUTION_TARGET_TYPES = {
+    "blog_post",
+    "freelance_proposal",
+    "automation_offer",
+    "digital_product_offer",
+    "lead_list",
+    "outreach_message",
+}
+CHANNEL_TYPES = {"blog", "email", "marketplace", "landing_page", "social", "direct_outreach"}
+DISTRIBUTION_RUN_STATUSES = {"queued", "submitted", "delivered", "responded", "converted", "failed", "archived"}
+CONVERSION_EVENT_TYPES = {
+    "impression",
+    "click",
+    "reply",
+    "lead_captured",
+    "proposal_accepted",
+    "sale",
+    "rejected",
+    "no_response",
+}
 
 
 @dataclass
@@ -295,6 +315,67 @@ class SQLiteStore:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS distribution_targets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    mechanism_id INTEGER,
+                    blueprint_id INTEGER,
+                    asset_id INTEGER,
+                    target_type TEXT,
+                    title TEXT,
+                    summary TEXT,
+                    payload_json TEXT,
+                    status TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS distribution_channels (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_type TEXT,
+                    name TEXT UNIQUE,
+                    description TEXT,
+                    config_json TEXT,
+                    is_active INTEGER,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS distribution_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    target_id INTEGER,
+                    channel_id INTEGER,
+                    mechanism_id INTEGER,
+                    execution_mode TEXT,
+                    status TEXT,
+                    external_ref TEXT,
+                    submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    completed_at DATETIME,
+                    notes TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS conversion_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id INTEGER,
+                    target_id INTEGER,
+                    mechanism_id INTEGER,
+                    event_type TEXT,
+                    value_estimate REAL,
+                    metadata_json TEXT,
+                    occurred_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
 
     def _validate_limit(self, limit: int) -> int:
         return max(1, min(limit, 1000))
@@ -339,6 +420,31 @@ class SQLiteStore:
         normalized = mode.lower().strip()
         if normalized not in EXECUTION_MODES:
             raise ValueError(f"invalid execution mode: {mode}")
+        return normalized
+
+
+    def _validate_distribution_target_type(self, target_type: str) -> str:
+        normalized = target_type.lower().strip()
+        if normalized not in DISTRIBUTION_TARGET_TYPES:
+            raise ValueError(f"invalid distribution target type: {target_type}")
+        return normalized
+
+    def _validate_channel_type(self, channel_type: str) -> str:
+        normalized = channel_type.lower().strip()
+        if normalized not in CHANNEL_TYPES:
+            raise ValueError(f"invalid channel type: {channel_type}")
+        return normalized
+
+    def _validate_distribution_run_status(self, status: str) -> str:
+        normalized = status.lower().strip()
+        if normalized not in DISTRIBUTION_RUN_STATUSES:
+            raise ValueError(f"invalid distribution run status: {status}")
+        return normalized
+
+    def _validate_conversion_event_type(self, event_type: str) -> str:
+        normalized = event_type.lower().strip()
+        if normalized not in CONVERSION_EVENT_TYPES:
+            raise ValueError(f"invalid conversion event type: {event_type}")
         return normalized
 
     def record_task_run(self, task: Task, assignee: str, realized_revenue: float) -> None:
@@ -1217,6 +1323,323 @@ class SQLiteStore:
             "escalation_count": int(row[2]) if row else 0,
         }
 
+    # ===== Distribution & Conversion Loop =====
+    def create_distribution_target(
+        self,
+        *,
+        mechanism_id: int,
+        target_type: str,
+        title: str,
+        summary: str,
+        payload_json: str,
+        status: str = "draft",
+        blueprint_id: int | None = None,
+        asset_id: int | None = None,
+    ) -> int:
+        valid_type = self._validate_distribution_target_type(target_type)
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO distribution_targets(
+                    mechanism_id, blueprint_id, asset_id, target_type, title, summary, payload_json, status
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (mechanism_id, blueprint_id, asset_id, valid_type, title, summary, payload_json, status),
+            )
+            return int(cur.lastrowid)
+
+    def list_distribution_targets(self, limit: int = 100) -> list[tuple]:
+        safe_limit = self._validate_limit(limit)
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT id, mechanism_id, blueprint_id, asset_id, target_type, title, summary, payload_json, status, created_at, updated_at
+                FROM distribution_targets
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+
+    def update_distribution_target_status(self, target_id: int, status: str) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE distribution_targets SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (status, target_id),
+            )
+        return cur.rowcount > 0
+
+    def create_distribution_channel(
+        self,
+        *,
+        channel_type: str,
+        name: str,
+        description: str,
+        config_json: str,
+        is_active: bool = True,
+    ) -> int:
+        valid_type = self._validate_channel_type(channel_type)
+        with self._connect() as conn:
+            existing = conn.execute("SELECT id FROM distribution_channels WHERE name=?", (name,)).fetchone()
+            if existing:
+                conn.execute(
+                    """
+                    UPDATE distribution_channels
+                    SET channel_type=?, description=?, config_json=?, is_active=?, updated_at=CURRENT_TIMESTAMP
+                    WHERE id=?
+                    """,
+                    (valid_type, description, config_json, int(is_active), int(existing[0])),
+                )
+                return int(existing[0])
+            cur = conn.execute(
+                """
+                INSERT INTO distribution_channels(channel_type, name, description, config_json, is_active)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (valid_type, name, description, config_json, int(is_active)),
+            )
+            return int(cur.lastrowid)
+
+    def list_distribution_channels(self, limit: int = 100, active_only: bool = False) -> list[tuple]:
+        safe_limit = self._validate_limit(limit)
+        with self._connect() as conn:
+            if active_only:
+                return conn.execute(
+                    """
+                    SELECT id, channel_type, name, description, config_json, is_active, created_at, updated_at
+                    FROM distribution_channels
+                    WHERE is_active=1
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (safe_limit,),
+                ).fetchall()
+            return conn.execute(
+                """
+                SELECT id, channel_type, name, description, config_json, is_active, created_at, updated_at
+                FROM distribution_channels
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+
+    def create_distribution_run(
+        self,
+        *,
+        target_id: int,
+        channel_id: int,
+        mechanism_id: int,
+        execution_mode: str,
+        status: str,
+        external_ref: str,
+        notes: str,
+    ) -> int:
+        valid_status = self._validate_distribution_run_status(status)
+        mode = self._validate_execution_mode(execution_mode)
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO distribution_runs(target_id, channel_id, mechanism_id, execution_mode, status, external_ref, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (target_id, channel_id, mechanism_id, mode, valid_status, external_ref, notes),
+            )
+            return int(cur.lastrowid)
+
+    def update_distribution_run_status(self, run_id: int, status: str, notes: str = "") -> bool:
+        valid_status = self._validate_distribution_run_status(status)
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE distribution_runs
+                SET status=?, notes=CASE WHEN ?='' THEN notes ELSE ? END,
+                    completed_at=CASE WHEN ? IN ('delivered','responded','converted','failed','archived') THEN CURRENT_TIMESTAMP ELSE completed_at END
+                WHERE id=?
+                """,
+                (valid_status, notes, notes, valid_status, run_id),
+            )
+        return cur.rowcount > 0
+
+    def list_distribution_runs(self, limit: int = 100) -> list[tuple]:
+        safe_limit = self._validate_limit(limit)
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT id, target_id, channel_id, mechanism_id, execution_mode, status, external_ref, submitted_at, completed_at, notes
+                FROM distribution_runs
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+
+    def record_conversion_event(
+        self,
+        *,
+        run_id: int,
+        target_id: int,
+        mechanism_id: int,
+        event_type: str,
+        value_estimate: float,
+        metadata_json: str,
+    ) -> int:
+        valid_event = self._validate_conversion_event_type(event_type)
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO conversion_events(run_id, target_id, mechanism_id, event_type, value_estimate, metadata_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (run_id, target_id, mechanism_id, valid_event, value_estimate, metadata_json),
+            )
+            return int(cur.lastrowid)
+
+    def list_conversion_events(self, limit: int = 100) -> list[tuple]:
+        safe_limit = self._validate_limit(limit)
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT id, run_id, target_id, mechanism_id, event_type, value_estimate, metadata_json, occurred_at
+                FROM conversion_events
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+
+    def apply_distribution_feedback(self, mechanism_id: int, confidence_delta: float, repeatability_delta: float) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT confidence_score, repeatability_score FROM income_mechanisms WHERE id=?",
+                (mechanism_id,),
+            ).fetchone()
+            if not row:
+                return False
+            confidence = max(0.0, min(1.0, float(row[0]) + confidence_delta))
+            repeatability = max(0.0, min(1.0, float(row[1]) + repeatability_delta))
+            conn.execute(
+                """
+                UPDATE income_mechanisms
+                SET confidence_score=?, repeatability_score=?, updated_at=CURRENT_TIMESTAMP
+                WHERE id=?
+                """,
+                (confidence, repeatability, mechanism_id),
+            )
+            return True
+
+    def apply_feedback_event(self, event_type: str, mechanism_id: int) -> bool:
+        event = self._validate_conversion_event_type(event_type)
+        positive = {"proposal_accepted", "sale", "lead_captured"}
+        negative = {"rejected", "no_response"}
+        if event in positive:
+            changed = self.apply_distribution_feedback(mechanism_id, confidence_delta=0.05, repeatability_delta=0.03)
+            self._apply_hypothesis_feedback(+0.03)
+            return changed
+        if event in negative:
+            changed = self.apply_distribution_feedback(mechanism_id, confidence_delta=-0.04, repeatability_delta=-0.03)
+            self._apply_hypothesis_feedback(-0.03)
+            return changed
+        return True
+
+    def _apply_hypothesis_feedback(self, delta: float) -> None:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, confidence_score
+                FROM hypotheses
+                WHERE status IN ('testing', 'validated')
+                ORDER BY updated_at DESC
+                LIMIT 5
+                """
+            ).fetchall()
+            for hypothesis_id, confidence in rows:
+                updated = max(0.0, min(1.0, float(confidence) + delta))
+                conn.execute(
+                    "UPDATE hypotheses SET confidence_score=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (updated, int(hypothesis_id)),
+                )
+
+    def conversion_metrics_by_channel(self) -> list[tuple]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    c.name,
+                    COUNT(DISTINCT r.id) as submitted_count,
+                    COALESCE(SUM(CASE WHEN e.event_type IN ('reply','lead_captured','proposal_accepted','sale') THEN 1 ELSE 0 END), 0) as responses,
+                    COALESCE(SUM(CASE WHEN e.event_type IN ('proposal_accepted','sale') THEN 1 ELSE 0 END), 0) as conversions,
+                    COALESCE(SUM(e.value_estimate), 0) as revenue_estimate
+                FROM distribution_channels c
+                LEFT JOIN distribution_runs r ON r.channel_id = c.id
+                LEFT JOIN conversion_events e ON e.run_id = r.id
+                GROUP BY c.id, c.name
+                ORDER BY submitted_count DESC
+                """
+            ).fetchall()
+        data: list[tuple] = []
+        for name, submitted, responses, conversions, revenue in rows:
+            submitted_i = int(submitted)
+            response_rate = (float(responses) / submitted_i) if submitted_i > 0 else 0.0
+            conversion_rate = (float(conversions) / submitted_i) if submitted_i > 0 else 0.0
+            data.append((str(name), submitted_i, round(response_rate, 4), round(conversion_rate, 4), round(float(revenue), 2)))
+        return data
+
+    def conversion_metrics_by_mechanism(self) -> list[tuple]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT m.id, m.type, m.title,
+                       COALESCE(SUM(CASE WHEN e.event_type IN ('proposal_accepted','sale') THEN 1 ELSE 0 END), 0) as conversions,
+                       COALESCE(SUM(e.value_estimate), 0) as revenue
+                FROM income_mechanisms m
+                LEFT JOIN conversion_events e ON e.mechanism_id = m.id
+                GROUP BY m.id, m.type, m.title
+                ORDER BY conversions DESC, revenue DESC
+                """
+            ).fetchall()
+        return [(int(r[0]), str(r[1]), str(r[2]), int(r[3]), round(float(r[4]), 2)) for r in rows]
+
+    def conversion_metrics_by_target_type(self) -> list[tuple]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT t.target_type,
+                       COUNT(DISTINCT r.id) as runs,
+                       COALESCE(SUM(CASE WHEN e.event_type IN ('proposal_accepted','sale') THEN 1 ELSE 0 END), 0) as conversions,
+                       COALESCE(SUM(e.value_estimate), 0) as revenue
+                FROM distribution_targets t
+                LEFT JOIN distribution_runs r ON r.target_id = t.id
+                LEFT JOIN conversion_events e ON e.run_id = r.id
+                GROUP BY t.target_type
+                ORDER BY conversions DESC
+                """
+            ).fetchall()
+        return [(str(r[0]), int(r[1]), int(r[2]), round(float(r[3]), 2)) for r in rows]
+
+    def distribution_token_efficiency(self) -> dict[str, float]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    COALESCE(SUM(CASE WHEN e.event_type IN ('proposal_accepted','sale') THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(e.value_estimate), 0),
+                    COALESCE(SUM(r.estimated_token_cost), 0)
+                FROM conversion_events e
+                LEFT JOIN execution_route_logs r ON r.task_id = e.run_id
+                """
+            ).fetchone()
+        conversions = int(row[0]) if row else 0
+        revenue = float(row[1]) if row else 0.0
+        tokens = float(row[2]) if row else 0.0
+        return {
+            "conversion_count": conversions,
+            "estimated_revenue": round(revenue, 2),
+            "token_spend_estimate": round(tokens, 2),
+            "revenue_per_token": round(revenue / tokens, 6) if tokens > 0 else 0.0,
+        }
+
     # ===== Existing Metrics/API Helpers =====
     def summary_metrics(self) -> dict[str, float]:
         with self._connect() as conn:
@@ -1250,6 +1673,10 @@ class SQLiteStore:
             mechanism_count = conn.execute("SELECT COUNT(*) FROM income_mechanisms").fetchone()
             blueprint_count = conn.execute("SELECT COUNT(*) FROM process_blueprints").fetchone()
             automation_candidate_count = conn.execute("SELECT COUNT(*) FROM automation_candidates").fetchone()
+            distribution_target_count = conn.execute("SELECT COUNT(*) FROM distribution_targets").fetchone()
+            distribution_channel_count = conn.execute("SELECT COUNT(*) FROM distribution_channels").fetchone()
+            distribution_run_count = conn.execute("SELECT COUNT(*) FROM distribution_runs").fetchone()
+            conversion_event_count = conn.execute("SELECT COUNT(*) FROM conversion_events").fetchone()
             execution_savings = self.execution_savings_summary()
 
         revenue = float(row[0]) if row else 0.0
@@ -1268,6 +1695,10 @@ class SQLiteStore:
             "mechanism_count": int(mechanism_count[0]) if mechanism_count else 0,
             "blueprint_count": int(blueprint_count[0]) if blueprint_count else 0,
             "automation_candidate_count": int(automation_candidate_count[0]) if automation_candidate_count else 0,
+            "distribution_target_count": int(distribution_target_count[0]) if distribution_target_count else 0,
+            "distribution_channel_count": int(distribution_channel_count[0]) if distribution_channel_count else 0,
+            "distribution_run_count": int(distribution_run_count[0]) if distribution_run_count else 0,
+            "conversion_event_count": int(conversion_event_count[0]) if conversion_event_count else 0,
             "replaced_llm_count": int(execution_savings.get("replaced_llm_count", 0)),
             "estimated_token_savings": int(execution_savings.get("estimated_token_savings", 0)),
             "escalation_count": int(execution_savings.get("escalation_count", 0)),
