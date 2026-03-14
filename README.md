@@ -1,80 +1,78 @@
 # Autonomous Profit Agent (PoC)
 
-브라우저 + 명령어 실행환경을 가진 AI 에이전트가 **예산 기반으로 수익 기회를 선택하고, 다음 액션을 자율적으로 실행**하는 프로젝트의 실행형 PoC입니다.
+브라우저/명령 실행 환경을 가진 에이전트가 **수익 기회 탐색 → 실험 → 실행 → 학습 → 최적화**를 반복하는 프로젝트입니다.
 
-Conway Research Automaton 스타일(계획 → 실행 → 평가 → 재계획) 루프를 반영했고, LLM 공급자로 **OpenAI / Claude / Copilot**을 선택할 수 있습니다.
+이 저장소는 단순 트레이딩 봇이 아니라, 아래 루프를 한 프레임에서 다룹니다.
 
-이번 버전은 단순 주문 실행을 넘어 **기회 생성 → 가설화 → 소액 실험 → confidence 업데이트 → validated 전략 승격**의 Strategy Lab 루프를 포함합니다.
+1. 기회 생성(팩토리)  
+2. 가설/실험(Strategy Lab)  
+3. 실행 라우팅(Token Economy + Execution Router)  
+4. 외부 배포/전환(Distribution & Conversion)  
+5. 채널/오퍼 배분 최적화(Allocation)  
+6. 오퍼 자체 자기개선(Self-Improvement)
 
-## 이번 단계에서 추가된 핵심 기능
+---
 
-- **메인 에이전트 + 서브 에이전트 팀 오케스트레이션**
-- **메리츠증권 / Binance 브로커 어댑터 연결 계층** (`UnifiedBroker`)
-- **주문 안정성 강화**
-  - Binance signed endpoint(HMAC SHA-256) + `timestamp`/`recvWindow`
-  - 메리츠 요청용 HMAC 기반 서명 헤더 스캐폴딩
-  - `client_order_id`(멱등키) 기반 주문 추적
-  - 주문 조회(`get_order`) / 취소(`cancel_order`) API 진입점
-  - 재시도(백오프) HTTP 호출
-  - **Order Validation Engine (Binance)**: tick size / step size / minQty / minNotional / precision 사전검증 및 자동 보정
-- **SQLite 영속성 확장**
-  - 기존: `task_runs`, `positions`, `system_events`
-  - 추가: `order_intents`, `order_executions`, `team_kpi_snapshots`
-- **Opportunity Factory**: market signal + recurring internal pattern 기반 기회 생성
-- **Hypothesis / Experiment Persistence**: `hypotheses`, `experiment_runs` 추가
-- **Strategy Lab Loop**: 실험 결과에 따라 confidence 증감 및 상태 전환('proposed/testing/validated/rejected/archived')
-- **Adaptive Learning Upgrade**: 실험 이력(win-rate/평균수익률) 기반 confidence 보정, fallback promotion, rejected 자동 아카이빙
-- **Income Mechanism Registry**: trading/blogging/freelancing/automation_service/digital_product/lead_generation 공통 모델
-- **Process Blueprint Registry**: 메커니즘별 반복 작업 설계도(JSON schema + steps)
-- **Automation Candidate Detector**: income mechanism에서 자동화 후보 추출 + 상태 전이
-- **Automation Asset/Token Tracking**: 후보별 asset(prompt/script) 및 token cost 관측치 저장
-- **Token Economy Policy**: task_type/mechanism 기준 max token budget + preferred mode + fallback/escalation 정책
-- **Execution Router**: cheap-first/deterministic-first/reusable-first 기반 `llm_direct|prompt_template|rule_based|code_based` 실행 경로 선택
-- **Execution Cache/Reuse Hook**: 동일 입력 반복시 캐시 재사용으로 토큰 비용 절감
-- **리커버리 워커 스캐폴딩**
-  - 런타임 시작 시 미완료 주문 의도(`order_intents`)를 스캔해 이벤트로 기록
-- **리스크 가드레일**: 단일 트레이드 비중 제한, 시장별 익스포저 한도, 손실 한도 초과 시 실행 중단
+## 1) 핵심 개념
 
-## 프로젝트 구조
+### Strategy Lab
+- `Opportunity`를 바로 실행하지 않고 가설(`hypotheses`)로 승격
+- 소액 실험(`experiment_runs`) 수행
+- 성과 기반으로 `proposed/testing/validated/rejected/archived` 전환
 
-```text
-.
-├── agent
-│   ├── __init__.py
-│   ├── brokers.py      # Meritz/Binance/Unified broker adapters (+signed requests)
-│   ├── lab.py          # opportunity factory + hypothesis/experiment loop
-│   ├── llm.py          # LLM provider adapters
-│   ├── models.py       # domain models
-│   ├── persistence.py  # SQLite store + TeamKPI + order durability
-│   ├── runtime.py      # runtime + team orchestration + risk/recovery
-│   └── strategy.py     # selection strategy
-├── tests
-│   └── test_team_runtime.py
-├── main.py
-├── dashboard.py
-└── README.md
-```
+### Execution Router
+- 실행 모드: `llm_direct | prompt_template | rule_based | code_based`
+- 원칙: **cheap-first / deterministic-first / reusable-first**
+- 토큰 정책(`token_policies`) + 캐시(`execution_cache`) + 라우팅 로그(`execution_route_logs`) 지원
 
-## 빠른 실행 (기본: Dry-run)
+### Distribution & Conversion
+- 배포 대상(`distribution_targets`) / 채널(`distribution_channels`) / 실행 이력(`distribution_runs`) / 외부 반응(`conversion_events`) 저장
+- stub adapter로 네트워크 없이 시뮬레이션 가능
 
+### Allocation Optimization
+- 성과 집계를 기반으로 채널/타깃/실행모드 배분 추천 생성
+- `allocation_policies`, `allocation_recommendations`, `offer_variants` 관리
+
+### Offer Self-Improvement
+- 변형 생성기(`VariantGenerator`)로 headline/CTA/length/structure/execution mode mutation 생성
+- 실험 큐(`variant_experiment_queue`)에서 소규모 검증
+- 비교기(`VariantPerformanceComparator`)로 승격/폐기 판단
+- 개선 추천(`creative_recommendations`) 생성
+
+---
+
+## 2) 빠른 시작
+
+### 설치
+별도 패키지 설치 없이 Python 표준 라이브러리 기반으로 실행 가능합니다.
+
+### 기본 실행 (Dry-run)
 ```bash
 python main.py --provider openai
 ```
 
-기본은 dry-run 모드이며 API 키가 없으면 브로커도 stub 모드로 동작합니다.
+### 주요 옵션
+- `--provider`: `openai | claude | copilot`
+- `--model`: 모델명 오버라이드
+- `--live-api`: 실제 LLM API 호출
+- `--budget`: 시작 예산
+- `--max-market-exposure-ratio`: 시장별 최대 익스포저
+- `--exploratory-budget-ratio`: 탐색/실험 예산 비율
+- `--lab-cycles`: Strategy Lab 반복 횟수
+- `--db-path`: SQLite 파일 경로
 
-## API 키 설정
+---
+
+## 3) 환경 변수
 
 ### LLM
-
 ```bash
 export OPENAI_API_KEY="..."
 export ANTHROPIC_API_KEY="..."
 export GITHUB_TOKEN="..."
 ```
 
-### Brokers
-
+### Broker
 ```bash
 # Meritz
 export MERITZ_API_KEY="..."
@@ -86,107 +84,113 @@ export BINANCE_API_KEY="..."
 export BINANCE_API_SECRET="..."
 ```
 
-## 주요 옵션
+> 키가 없으면 기본적으로 안전한 stub/dry-run 경로를 사용합니다.
 
-- `--provider`: `openai | claude | copilot`
-- `--model`: 모델 오버라이드
-- `--live-api`: 실 LLM API 호출
-- `--budget`: 시작 예산
-- `--max-market-exposure-ratio`: 시장(주식/가상화폐)별 최대 익스포저 비율
-- `--exploratory-budget-ratio`: 실험(탐색) 예산 비율
-- `--lab-cycles`: 실행 전 research loop 반복 횟수
-- `--db-path`: SQLite 파일 경로
+---
 
-## 영속성 데이터
-
-`SQLiteStore`는 다음을 저장합니다.
-
-- `task_runs`: 태스크별 담당자/비용/실현매출/상태/노트
-- `positions`: 시장/심볼/주문 예산/상태
-- `system_events`: 실행 이벤트(성공/실패/리스크 중단/복구 스캔)
-- `order_intents`: 브로커 제출 전후 주문 의도(멱등키 포함)
-- `order_executions`: 브로커 응답 스냅샷
-- `team_kpi_snapshots`: 팀 KPI 시계열 스냅샷
-- `hypotheses`: 수익 가설(thesis/evidence/confidence/status)
-- `hypotheses`는 rejected 누적 시 archived로 자동 전환 가능
-- `experiment_runs`: 가설 실험 결과(pnl/return/outcome/failure_reason)
-- `income_mechanisms`: 투자 외 포함 수익 메커니즘 레지스트리
-- `process_blueprints`: 메커니즘별 정형화 프로세스 블루프린트
-- `automation_candidates`: 자동화 후보(type/status/confidence/reason)
-- `candidate_assets`: 후보별 재사용 asset(prompt/script 등)
-- `token_observations`: 후보별 token in/out/cost 관측치
-- `token_policies`: task type별 token economy 정책
-- `execution_route_logs`: 최근 실행 경로/절감량/에스컬레이션 이력
-- `execution_cache`: 동일 입력 재사용 결과 캐시
-
-또한 `team_kpis()`로 팀원별 task 수, 매출, 비용, 이익을 집계합니다.
-
-## GUI 대시보드
-
-모든 핵심 데이터를 조회/관리할 수 있는 웹 대시보드를 제공합니다.
+## 4) 대시보드 사용법
 
 ```bash
 python dashboard.py --db-path agent_state.db --port 8080 --username admin --password "change-me"
 ```
 
-브라우저에서 `http://localhost:8080` 접속 후 다음을 수행할 수 있습니다.
+접속: `http://localhost:8080`
 
-- KPI/수익/비용/미체결 주문 현황 확인
-- hypothesis status counts / top confidence hypotheses / recent experiments / lab summary 확인
-- income mechanism 목록/상태 및 process blueprint 목록 확인
-- automation candidate / token cost 요약 확인
-- token policy / 최근 execution route / execution mode usage / estimated token savings 확인
-- Task Runs / Positions / Order Intents / Executions / KPI Snapshots / Events 조회
-- Order Executions `raw_response`에서 validation 보정/실패 사유 확인 가능
-- 수동 관리 액션
-  - KPI snapshot 생성
-  - 주문 의도(`order_intents`) 상태 변경
-  - 포지션 상태 변경
-  - 수동 이벤트 기록
-- 운영 하드닝
-  - Basic Auth(`--username/--password` 또는 `DASHBOARD_USERNAME/DASHBOARD_PASSWORD`)
-  - 보안 헤더(`X-Frame-Options`, `X-Content-Type-Options`)
-  - JSON API(`/api/summary`) 제공
-  - 입력 유효성 검증(상태값/쿼리 limit)
+### 대시보드에서 볼 수 있는 내용
+- 수익/비용/ROI/KPI/이벤트
+- 가설/실험 상태
+- 메커니즘/블루프린트/자동화 후보
+- 토큰 정책/실행 라우팅/절감량
+- 배포 대상/채널/실행/전환 지표
+- 배분 정책/추천/오퍼 variant 비교
+- variant 실험 큐/승격·폐기 이력/creative 개선 추천
 
-## 테스트
+### 관리 액션
+- KPI snapshot 생성
+- 주문 의도 상태 변경
+- 포지션 상태 변경
+- 수동 이벤트 기록
+
+---
+
+## 5) 실행 루프 요약
+
+### 내부 루프
+1. Opportunity 생성
+2. Hypothesis 생성
+3. Small-bet experiment
+4. Confidence 업데이트
+5. Validated 전략 실행
+
+### 외부 성과 루프
+1. Target 생성
+2. Channel 배포
+3. Response/Conversion 이벤트 기록
+4. Allocation 추천 생성
+5. Self-improvement variant 생성/검증/승격
+
+---
+
+## 6) 데이터 저장소(SQLite)
+
+핵심 테이블 묶음:
+
+### 연구/전략
+- `hypotheses`, `experiment_runs`
+
+### 실행/거래
+- `task_runs`, `positions`, `order_intents`, `order_executions`, `system_events`
+
+### 메커니즘/프로세스
+- `income_mechanisms`, `process_blueprints`
+
+### 자동화/토큰
+- `automation_candidates`, `candidate_assets`, `token_observations`, `token_policies`, `execution_route_logs`, `execution_cache`
+
+### 배포/전환
+- `distribution_targets`, `distribution_channels`, `distribution_runs`, `conversion_events`
+
+### 최적화/자기개선
+- `allocation_policies`, `offer_variants`, `allocation_recommendations`, `variant_experiment_queue`, `creative_recommendations`
+
+---
+
+## 7) 테스트
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-## 참고
+테스트는 allocation/distribution/router/lab/order-validation/self-improvement/runtime까지 포함합니다.
 
-- `agent/brokers.py`의 메리츠 live 서명은 운영 전 최신 공식 문서의 헤더/파라미터 요구사항으로 최종 보정해야 합니다.
-- Binance는 signed endpoint 기본 흐름(HMAC, timestamp, recvWindow)을 반영했지만, 실거래 전 주문 수량/정밀도/규정 필터(`LOT_SIZE`, `MIN_NOTIONAL`) 검증이 추가로 필요합니다.
+---
 
+## 8) 프로젝트 구조
 
-## Distribution & Conversion Loop
+```text
+.
+├── agent/
+│   ├── brokers.py
+│   ├── execution.py
+│   ├── lab.py
+│   ├── distribution.py
+│   ├── allocation.py
+│   ├── self_improvement.py
+│   ├── persistence.py
+│   ├── runtime.py
+│   ├── strategy.py
+│   ├── llm.py
+│   ├── mechanisms.py
+│   └── models.py
+├── dashboard.py
+├── main.py
+└── tests/
+```
 
-- Distribution target registry for `blog_post`, `freelance_proposal`, `automation_offer`, `digital_product_offer`, `lead_list`, `outreach_message`.
-- Channel registry for `blog`, `email`, `marketplace`, `landing_page`, `social`, `direct_outreach`.
-- Distribution run tracking and conversion event persistence (impression/click/reply/lead/sale/rejected/no_response).
-- Stub adapters (`BlogChannelAdapterStub`, `OutreachChannelAdapterStub`, `MarketplaceChannelAdapterStub`) to simulate external distribution without network dependencies.
-- Feedback integration updates mechanism confidence/repeatability and recent hypothesis confidence from conversion outcomes.
-- Dashboard/API now expose distribution targets/channels/runs/events and conversion metrics by channel/mechanism/target type plus token efficiency.
+---
 
+## 9) 운영 시 주의사항
 
-## Channel Allocation & Offer Optimization Loop
-
-- Added allocation policy registry (`allocation_policies`) to define base weight, trial bounds, and cooldown by mechanism/channel/target_type/execution_mode.
-- Added offer variant tracking (`offer_variants`) and variant-linked distribution runs for A/B style optimization.
-- Added allocation scoring (`AllocationScoringEngine`) using conversion/response/revenue/token-efficiency plus failure/no-response penalties.
-- Added recommendation registry (`allocation_recommendations`) with types like increase/decrease/pause/promote/retire/switch-mode and auto-applied flag.
-- Added optimizer (`AllocationOptimizer`) that generates reallocation recommendations and feeds results back into mechanism confidence/repeatability.
-- Dashboard/API now expose allocation policies, variant tables, score breakdown, performance summaries, recommendations, and auto-applied history.
-
-
-## Offer Generation & Self-Improvement Loop
-
-- Added rule-based `VariantGenerator` that creates challenger variants using headline/CTA/length/structure/execution-mode mutations.
-- Added `variant_experiment_queue` to stage variants under controlled small-trial experiments (`queued/testing/promoted/retired/blocked`).
-- Added `VariantPerformanceComparator` with minimum-trial guard and small-sample penalty for safer promotion decisions.
-- Added promotion/retirement lifecycle rules in `OfferSelfImprovementLoop` (`proposed/testing/promoted/incumbent/retired/archived`) with explicit rationale persistence.
-- Added `creative_recommendations` for blueprint/template defaults and creative strategy updates (`update_blueprint_default`, `switch_default_execution_mode`, etc.).
-- Added safe generation caps by target testing concurrency, mechanism generation rate, mechanism confidence, and token-budget checks.
-- Dashboard/API now expose experiment queue, base-vs-challenger comparisons, creative recommendations, blocked generation counts, and optimization history.
+- Meritz/Binance 실거래 사용 전, 최신 API 스펙/서명 규칙/에러 코드/주문 제한을 반드시 재검증하세요.
+- 이 저장소는 PoC 성격이며, 실거래 적용 전에는 리스크 한도·재시도·모니터링·장애복구 정책을 강화해야 합니다.
+- 추천/자동 상태 전이는 규칙 기반이므로, 운영 환경에서는 사람 승인(approval gate)과 함께 사용하는 것을 권장합니다.
