@@ -43,6 +43,17 @@ CONVERSION_EVENT_TYPES = {
     "no_response",
 }
 
+ALLOCATION_RECOMMENDATION_TYPES = {
+    "increase_allocation",
+    "decrease_allocation",
+    "pause_channel",
+    "promote_variant",
+    "retire_variant",
+    "escalate_to_higher_effort",
+    "switch_execution_mode",
+}
+ALLOCATION_RECOMMENDATION_STATUSES = {"pending", "auto_applied", "accepted", "rejected", "done"}
+
 
 @dataclass
 class TeamKPI:
@@ -362,6 +373,9 @@ class SQLiteStore:
                 )
                 """
             )
+            run_columns = {row[1] for row in conn.execute("PRAGMA table_info(distribution_runs)").fetchall()}
+            if "variant_id" not in run_columns:
+                conn.execute("ALTER TABLE distribution_runs ADD COLUMN variant_id INTEGER")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS conversion_events (
@@ -373,6 +387,56 @@ class SQLiteStore:
                     value_estimate REAL,
                     metadata_json TEXT,
                     occurred_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS offer_variants (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    target_id INTEGER,
+                    variant_key TEXT,
+                    title TEXT,
+                    payload_patch_json TEXT,
+                    status TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(target_id, variant_key)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS allocation_policies (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    mechanism_id INTEGER,
+                    channel_id INTEGER,
+                    target_type TEXT,
+                    execution_mode TEXT,
+                    base_weight REAL,
+                    min_trials INTEGER,
+                    max_trials INTEGER,
+                    cooldown_hours REAL,
+                    is_active INTEGER,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS allocation_recommendations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    mechanism_id INTEGER,
+                    channel_id INTEGER,
+                    target_type TEXT,
+                    variant_id INTEGER,
+                    recommendation_type TEXT,
+                    rationale TEXT,
+                    expected_impact REAL,
+                    confidence REAL,
+                    status TEXT,
+                    auto_applied INTEGER,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
                 """
             )
@@ -445,6 +509,19 @@ class SQLiteStore:
         normalized = event_type.lower().strip()
         if normalized not in CONVERSION_EVENT_TYPES:
             raise ValueError(f"invalid conversion event type: {event_type}")
+        return normalized
+
+
+    def _validate_recommendation_type(self, recommendation_type: str) -> str:
+        normalized = recommendation_type.lower().strip()
+        if normalized not in ALLOCATION_RECOMMENDATION_TYPES:
+            raise ValueError(f"invalid recommendation type: {recommendation_type}")
+        return normalized
+
+    def _validate_recommendation_status(self, status: str) -> str:
+        normalized = status.lower().strip()
+        if normalized not in ALLOCATION_RECOMMENDATION_STATUSES:
+            raise ValueError(f"invalid recommendation status: {status}")
         return normalized
 
     def record_task_run(self, task: Task, assignee: str, realized_revenue: float) -> None:
@@ -1435,16 +1512,17 @@ class SQLiteStore:
         status: str,
         external_ref: str,
         notes: str,
+        variant_id: int | None = None,
     ) -> int:
         valid_status = self._validate_distribution_run_status(status)
         mode = self._validate_execution_mode(execution_mode)
         with self._connect() as conn:
             cur = conn.execute(
                 """
-                INSERT INTO distribution_runs(target_id, channel_id, mechanism_id, execution_mode, status, external_ref, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO distribution_runs(target_id, channel_id, mechanism_id, execution_mode, status, external_ref, notes, variant_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (target_id, channel_id, mechanism_id, mode, valid_status, external_ref, notes),
+                (target_id, channel_id, mechanism_id, mode, valid_status, external_ref, notes, variant_id),
             )
             return int(cur.lastrowid)
 
@@ -1467,13 +1545,18 @@ class SQLiteStore:
         with self._connect() as conn:
             return conn.execute(
                 """
-                SELECT id, target_id, channel_id, mechanism_id, execution_mode, status, external_ref, submitted_at, completed_at, notes
+                SELECT id, target_id, channel_id, mechanism_id, execution_mode, status, external_ref, submitted_at, completed_at, notes, variant_id
                 FROM distribution_runs
                 ORDER BY id DESC
                 LIMIT ?
                 """,
                 (safe_limit,),
             ).fetchall()
+
+    def update_distribution_run_variant(self, run_id: int, variant_id: int) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute("UPDATE distribution_runs SET variant_id=? WHERE id=?", (variant_id, run_id))
+        return cur.rowcount > 0
 
     def record_conversion_event(
         self,
@@ -1640,6 +1723,283 @@ class SQLiteStore:
             "revenue_per_token": round(revenue / tokens, 6) if tokens > 0 else 0.0,
         }
 
+    # ===== Channel Allocation & Offer Optimization =====
+    def create_offer_variant(
+        self,
+        *,
+        target_id: int,
+        variant_key: str,
+        title: str,
+        payload_patch_json: str,
+        status: str = "active",
+    ) -> int:
+        with self._connect() as conn:
+            existing = conn.execute(
+                "SELECT id FROM offer_variants WHERE target_id=? AND variant_key=?",
+                (target_id, variant_key),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    """
+                    UPDATE offer_variants
+                    SET title=?, payload_patch_json=?, status=?
+                    WHERE id=?
+                    """,
+                    (title, payload_patch_json, status, int(existing[0])),
+                )
+                return int(existing[0])
+            cur = conn.execute(
+                """
+                INSERT INTO offer_variants(target_id, variant_key, title, payload_patch_json, status)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (target_id, variant_key, title, payload_patch_json, status),
+            )
+            return int(cur.lastrowid)
+
+    def list_offer_variants(self, target_id: int | None = None, limit: int = 100) -> list[tuple]:
+        safe_limit = self._validate_limit(limit)
+        with self._connect() as conn:
+            if target_id is not None:
+                return conn.execute(
+                    """
+                    SELECT id, target_id, variant_key, title, payload_patch_json, status, created_at
+                    FROM offer_variants
+                    WHERE target_id=?
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (target_id, safe_limit),
+                ).fetchall()
+            return conn.execute(
+                """
+                SELECT id, target_id, variant_key, title, payload_patch_json, status, created_at
+                FROM offer_variants
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+
+    def upsert_allocation_policy(
+        self,
+        *,
+        mechanism_id: int | None,
+        channel_id: int | None,
+        target_type: str | None,
+        execution_mode: str | None,
+        base_weight: float,
+        min_trials: int,
+        max_trials: int,
+        cooldown_hours: float,
+        is_active: bool,
+    ) -> int:
+        normalized_target = self._validate_distribution_target_type(target_type) if target_type else None
+        normalized_mode = self._validate_execution_mode(execution_mode) if execution_mode else None
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO allocation_policies(
+                    mechanism_id, channel_id, target_type, execution_mode, base_weight,
+                    min_trials, max_trials, cooldown_hours, is_active
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    mechanism_id,
+                    channel_id,
+                    normalized_target,
+                    normalized_mode,
+                    base_weight,
+                    min_trials,
+                    max_trials,
+                    cooldown_hours,
+                    int(is_active),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_allocation_policies(self, limit: int = 100, active_only: bool = False) -> list[tuple]:
+        safe_limit = self._validate_limit(limit)
+        with self._connect() as conn:
+            if active_only:
+                return conn.execute(
+                    """
+                    SELECT id, mechanism_id, channel_id, target_type, execution_mode, base_weight, min_trials,
+                           max_trials, cooldown_hours, is_active, created_at, updated_at
+                    FROM allocation_policies
+                    WHERE is_active=1
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (safe_limit,),
+                ).fetchall()
+            return conn.execute(
+                """
+                SELECT id, mechanism_id, channel_id, target_type, execution_mode, base_weight, min_trials,
+                       max_trials, cooldown_hours, is_active, created_at, updated_at
+                FROM allocation_policies
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+
+    def record_allocation_recommendation(
+        self,
+        *,
+        mechanism_id: int | None,
+        channel_id: int | None,
+        target_type: str | None,
+        variant_id: int | None,
+        recommendation_type: str,
+        rationale: str,
+        expected_impact: float,
+        confidence: float,
+        status: str = "pending",
+        auto_applied: bool = False,
+    ) -> int:
+        rec_type = self._validate_recommendation_type(recommendation_type)
+        rec_status = self._validate_recommendation_status(status)
+        normalized_target = self._validate_distribution_target_type(target_type) if target_type else None
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO allocation_recommendations(
+                    mechanism_id, channel_id, target_type, variant_id, recommendation_type,
+                    rationale, expected_impact, confidence, status, auto_applied
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    mechanism_id,
+                    channel_id,
+                    normalized_target,
+                    variant_id,
+                    rec_type,
+                    rationale,
+                    expected_impact,
+                    max(0.0, min(1.0, confidence)),
+                    rec_status,
+                    int(auto_applied),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_allocation_recommendations(self, limit: int = 100) -> list[tuple]:
+        safe_limit = self._validate_limit(limit)
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT id, mechanism_id, channel_id, target_type, variant_id, recommendation_type,
+                       rationale, expected_impact, confidence, status, auto_applied, created_at
+                FROM allocation_recommendations
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+
+    def update_allocation_recommendation_status(self, recommendation_id: int, status: str) -> bool:
+        rec_status = self._validate_recommendation_status(status)
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE allocation_recommendations SET status=? WHERE id=?",
+                (rec_status, recommendation_id),
+            )
+        return cur.rowcount > 0
+
+    def performance_summary(
+        self,
+        *,
+        dimension: str,
+        limit: int = 100,
+    ) -> list[tuple]:
+        safe_limit = self._validate_limit(limit)
+        mapping = {
+            "mechanism": "CAST(r.mechanism_id AS TEXT)",
+            "channel": "CAST(r.channel_id AS TEXT)",
+            "target_type": "t.target_type",
+            "execution_mode": "r.execution_mode",
+            "variant": "COALESCE(CAST(r.variant_id AS TEXT), 'none')",
+            "offer_title": "t.title",
+        }
+        group_expr = mapping.get(dimension)
+        if not group_expr:
+            raise ValueError(f"unsupported dimension: {dimension}")
+
+        query = f"""
+            SELECT
+                {group_expr} AS dim_key,
+                COUNT(DISTINCT r.id) AS submissions,
+                COALESCE(SUM(CASE WHEN r.status IN ('delivered','responded','converted') THEN 1 ELSE 0 END), 0) AS deliveries,
+                COALESCE(SUM(CASE WHEN e.event_type IN ('reply','lead_captured','proposal_accepted','sale') THEN 1 ELSE 0 END), 0) AS responses,
+                COALESCE(SUM(CASE WHEN e.event_type IN ('proposal_accepted','sale') THEN 1 ELSE 0 END), 0) AS conversions,
+                COALESCE(SUM(e.value_estimate), 0) AS estimated_revenue,
+                COALESCE(SUM(CASE WHEN e.event_type='rejected' OR r.status='failed' THEN 1 ELSE 0 END), 0) AS failures,
+                COALESCE(SUM(CASE WHEN e.event_type='no_response' THEN 1 ELSE 0 END), 0) AS no_responses,
+                COALESCE(AVG(el.estimated_token_cost), 0) AS token_cost,
+                COALESCE(AVG(m.expected_cost), 0) AS execution_cost,
+                COALESCE(AVG(m.repeatability_score), 0) AS repeatability_score,
+                COALESCE(AVG(m.automation_potential), 0) AS automation_potential
+            FROM distribution_runs r
+            LEFT JOIN distribution_targets t ON t.id = r.target_id
+            LEFT JOIN conversion_events e ON e.run_id = r.id
+            LEFT JOIN execution_route_logs el ON el.task_id = r.id
+            LEFT JOIN income_mechanisms m ON m.id = r.mechanism_id
+            GROUP BY dim_key
+            ORDER BY submissions DESC
+            LIMIT ?
+        """
+
+        with self._connect() as conn:
+            rows = conn.execute(query, (safe_limit,)).fetchall()
+
+        results: list[tuple] = []
+        for row in rows:
+            key = str(row[0])
+            submissions = int(row[1])
+            deliveries = int(row[2])
+            responses = int(row[3])
+            conversions = int(row[4])
+            revenue = float(row[5])
+            failures = int(row[6])
+            no_responses = int(row[7])
+            token_cost = float(row[8])
+            execution_cost = float(row[9])
+            repeatability = float(row[10])
+            automation = float(row[11])
+
+            response_rate = responses / submissions if submissions else 0.0
+            conversion_rate = conversions / submissions if submissions else 0.0
+            revenue_per_run = revenue / submissions if submissions else 0.0
+            revenue_per_token = revenue / token_cost if token_cost > 0 else 0.0
+            conversion_per_token = conversions / token_cost if token_cost > 0 else 0.0
+            failure_rate = failures / submissions if submissions else 0.0
+            no_response_rate = no_responses / submissions if submissions else 0.0
+
+            results.append(
+                (
+                    key,
+                    submissions,
+                    deliveries,
+                    responses,
+                    conversions,
+                    round(revenue, 4),
+                    round(response_rate, 6),
+                    round(conversion_rate, 6),
+                    round(revenue_per_run, 6),
+                    round(revenue_per_token, 6),
+                    round(conversion_per_token, 6),
+                    round(failure_rate, 6),
+                    round(no_response_rate, 6),
+                    round(repeatability, 6),
+                    round(automation, 6),
+                    round(execution_cost, 6),
+                    round(token_cost, 6),
+                )
+            )
+        return results
+
     # ===== Existing Metrics/API Helpers =====
     def summary_metrics(self) -> dict[str, float]:
         with self._connect() as conn:
@@ -1677,6 +2037,10 @@ class SQLiteStore:
             distribution_channel_count = conn.execute("SELECT COUNT(*) FROM distribution_channels").fetchone()
             distribution_run_count = conn.execute("SELECT COUNT(*) FROM distribution_runs").fetchone()
             conversion_event_count = conn.execute("SELECT COUNT(*) FROM conversion_events").fetchone()
+            allocation_policy_count = conn.execute("SELECT COUNT(*) FROM allocation_policies").fetchone()
+            offer_variant_count = conn.execute("SELECT COUNT(*) FROM offer_variants").fetchone()
+            allocation_recommendation_count = conn.execute("SELECT COUNT(*) FROM allocation_recommendations").fetchone()
+            auto_applied_recommendation_count = conn.execute("SELECT COUNT(*) FROM allocation_recommendations WHERE auto_applied=1").fetchone()
             execution_savings = self.execution_savings_summary()
 
         revenue = float(row[0]) if row else 0.0
@@ -1699,6 +2063,10 @@ class SQLiteStore:
             "distribution_channel_count": int(distribution_channel_count[0]) if distribution_channel_count else 0,
             "distribution_run_count": int(distribution_run_count[0]) if distribution_run_count else 0,
             "conversion_event_count": int(conversion_event_count[0]) if conversion_event_count else 0,
+            "allocation_policy_count": int(allocation_policy_count[0]) if allocation_policy_count else 0,
+            "offer_variant_count": int(offer_variant_count[0]) if offer_variant_count else 0,
+            "allocation_recommendation_count": int(allocation_recommendation_count[0]) if allocation_recommendation_count else 0,
+            "auto_applied_recommendation_count": int(auto_applied_recommendation_count[0]) if auto_applied_recommendation_count else 0,
             "replaced_llm_count": int(execution_savings.get("replaced_llm_count", 0)),
             "estimated_token_savings": int(execution_savings.get("estimated_token_savings", 0)),
             "escalation_count": int(execution_savings.get("escalation_count", 0)),

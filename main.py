@@ -4,6 +4,7 @@ import argparse
 
 from agent import (
     AgentRuntime,
+    AllocationOptimizer,
     AgentState,
     AgentTeam,
     AutomationCandidateDetector,
@@ -231,13 +232,18 @@ def run_distribution_loop(store: SQLiteStore) -> None:
             channel_type = str(channel[1])
             if (target_id, channel_id) in existing_pairs:
                 continue
+            variants = store.list_offer_variants(target_id=target_id, limit=2)
+            variant_ids = [int(v[0]) for v in variants] or [None]
             adapter = adapter_for_channel_type(channel_type, store)
-            adapter.submit(
-                target_id=target_id,
-                channel_id=channel_id,
-                mechanism_id=mechanism_id,
-                execution_mode="rule_based",
-            )
+            for variant_id in variant_ids:
+                result = adapter.submit(
+                    target_id=target_id,
+                    channel_id=channel_id,
+                    mechanism_id=mechanism_id,
+                    execution_mode="rule_based",
+                )
+                if variant_id is not None:
+                    store.update_distribution_run_variant(result.run_id, variant_id)
 
 def seed_token_policies(store: SQLiteStore) -> None:
     presets = [
@@ -255,6 +261,50 @@ def seed_token_policies(store: SQLiteStore) -> None:
             escalation_condition=escalation,
             fallback_mode=fallback,
             caching_enabled=caching,
+        )
+
+
+
+def seed_allocation_policies(store: SQLiteStore) -> None:
+    if store.list_allocation_policies(limit=1):
+        return
+    channels = store.list_distribution_channels(limit=50)
+    mechanisms = store.list_income_mechanisms(limit=50)
+    targets = store.list_distribution_targets(limit=50)
+
+    for mechanism in mechanisms:
+        mechanism_id = int(mechanism[0])
+        mechanism_type = str(mechanism[1])
+        for channel in channels:
+            channel_id = int(channel[0])
+            store.upsert_allocation_policy(
+                mechanism_id=mechanism_id,
+                channel_id=channel_id,
+                target_type=None,
+                execution_mode="rule_based" if mechanism_type != "trading" else "code_based",
+                base_weight=1.0,
+                min_trials=2,
+                max_trials=12,
+                cooldown_hours=6.0,
+                is_active=True,
+            )
+
+    for target in targets:
+        target_id = int(target[0])
+        target_type = str(target[4])
+        store.create_offer_variant(
+            target_id=target_id,
+            variant_key="headline_a",
+            title=f"{target_type} headline A",
+            payload_patch_json='{"headline":"A"}',
+            status="active",
+        )
+        store.create_offer_variant(
+            target_id=target_id,
+            variant_key="headline_b",
+            title=f"{target_type} headline B",
+            payload_patch_json='{"headline":"B"}',
+            status="active",
         )
 
 def build_default_team() -> AgentTeam:
@@ -314,7 +364,9 @@ def main() -> None:
     seed_token_policies(store)
     seed_distribution_channels(store)
     seed_distribution_targets(store)
+    seed_allocation_policies(store)
     run_distribution_loop(store)
+    AllocationOptimizer(store).generate_recommendations()
 
     lab = StrategyLab(
         store=store,

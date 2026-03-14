@@ -11,7 +11,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from agent import SQLiteStore
+from agent import AllocationScoringEngine, SQLiteStore
 
 LOGGER = logging.getLogger("agent-dashboard")
 
@@ -66,6 +66,14 @@ def render_dashboard(store: SQLiteStore, flash: str = "") -> str:
     mechanism_conversion = store.conversion_metrics_by_mechanism()
     target_conversion = store.conversion_metrics_by_target_type()
     dist_token_efficiency = store.distribution_token_efficiency()
+    allocation_policies = store.list_allocation_policies(30)
+    variants = store.list_offer_variants(limit=30)
+    recommendations = store.list_allocation_recommendations(30)
+    perf_by_channel = store.performance_summary(dimension="channel", limit=30)
+    perf_by_mechanism = store.performance_summary(dimension="mechanism", limit=30)
+    perf_by_variant = store.performance_summary(dimension="variant", limit=30)
+    scoring_engine = AllocationScoringEngine(store)
+    channel_scores = scoring_engine.score_dimension("channel", limit=20)
 
     kpi_rows = [(k.assignee, k.task_count, round(k.revenue, 2), round(k.cost, 2), round(k.profit, 2)) for k in kpis]
 
@@ -122,6 +130,10 @@ def render_dashboard(store: SQLiteStore, flash: str = "") -> str:
       <div class="card"><div class="k">Distribution Runs</div><div class="v">{metrics['distribution_run_count']}</div></div>
       <div class="card"><div class="k">Conversion Events</div><div class="v">{metrics['conversion_event_count']}</div></div>
       <div class="card"><div class="k">Conv Revenue / Token</div><div class="v">{dist_token_efficiency['revenue_per_token']:.4f}</div></div>
+      <div class="card"><div class="k">Allocation Policies</div><div class="v">{metrics['allocation_policy_count']}</div></div>
+      <div class="card"><div class="k">Offer Variants</div><div class="v">{metrics['offer_variant_count']}</div></div>
+      <div class="card"><div class="k">Recommendations</div><div class="v">{metrics['allocation_recommendation_count']}</div></div>
+      <div class="card"><div class="k">Auto Applied Realloc</div><div class="v">{metrics['auto_applied_recommendation_count']}</div></div>
     </div>
 
     <section>
@@ -184,6 +196,13 @@ def render_dashboard(store: SQLiteStore, flash: str = "") -> str:
     <section><h2>Mechanism Conversion Metrics</h2>{_table(['id','type','title','conversions','revenue_estimate'], mechanism_conversion)}</section>
     <section><h2>Target Type Performance</h2>{_table(['target_type','runs','conversions','revenue_estimate'], target_conversion)}</section>
     <section><h2>Distribution Token Efficiency</h2>{_table(['conversion_count','estimated_revenue','token_spend_estimate','revenue_per_token'], [(dist_token_efficiency['conversion_count'], dist_token_efficiency['estimated_revenue'], dist_token_efficiency['token_spend_estimate'], dist_token_efficiency['revenue_per_token'])])}</section>
+    <section><h2>Allocation Policies</h2>{_table(['id','mechanism_id','channel_id','target_type','execution_mode','base_weight','min_trials','max_trials','cooldown_hours','is_active','updated_at'], allocation_policies)}</section>
+    <section><h2>Offer Variants</h2>{_table(['id','target_id','variant_key','title','payload_patch_json','status','created_at'], variants)}</section>
+    <section><h2>Channel Allocation Score Breakdown</h2>{_table(['channel_key','score','conversion_rate','response_rate','est_revenue','revenue_per_token','failure_rate','no_response_rate','repeatability','automation_potential','execution_cost','token_cost'], [(x.key, x.score, x.conversion_rate, x.response_rate, x.estimated_revenue, x.revenue_per_token, x.failure_rate, x.no_response_rate, x.repeatability_score, x.automation_potential, x.execution_cost, x.token_cost) for x in channel_scores])}</section>
+    <section><h2>Performance by Channel</h2>{_table(['key','submissions','deliveries','responses','conversions','estimated_revenue','response_rate','conversion_rate','revenue_per_run','revenue_per_token','conversion_per_token','failure_rate','no_response_rate','repeatability','automation','execution_cost','token_cost'], perf_by_channel)}</section>
+    <section><h2>Performance by Mechanism</h2>{_table(['key','submissions','deliveries','responses','conversions','estimated_revenue','response_rate','conversion_rate','revenue_per_run','revenue_per_token','conversion_per_token','failure_rate','no_response_rate','repeatability','automation','execution_cost','token_cost'], perf_by_mechanism)}</section>
+    <section><h2>Performance by Variant</h2>{_table(['key','submissions','deliveries','responses','conversions','estimated_revenue','response_rate','conversion_rate','revenue_per_run','revenue_per_token','conversion_per_token','failure_rate','no_response_rate','repeatability','automation','execution_cost','token_cost'], perf_by_variant)}</section>
+    <section><h2>Reallocation Recommendations</h2>{_table(['id','mechanism_id','channel_id','target_type','variant_id','recommendation_type','rationale','expected_impact','confidence','status','auto_applied','created_at'], recommendations)}</section>
     <section><h2>Recent Execution Routes</h2>{_table(['id','task_id','task_type','mechanism_type','selected_mode','fallback_mode','reason','token_cost','token_savings','escalated','status','created_at'], execution_routes)}</section>
   </div>
 </body>
@@ -267,6 +286,15 @@ def create_handler(store: SQLiteStore, config: DashboardConfig):
                         "mechanism_conversion_metrics": store.conversion_metrics_by_mechanism(),
                         "target_conversion_metrics": store.conversion_metrics_by_target_type(),
                         "distribution_token_efficiency": store.distribution_token_efficiency(),
+                        "allocation_policies": store.list_allocation_policies(50),
+                        "offer_variants": store.list_offer_variants(limit=50),
+                        "allocation_recommendations": store.list_allocation_recommendations(50),
+                        "performance_by_channel": store.performance_summary(dimension="channel", limit=50),
+                        "performance_by_mechanism": store.performance_summary(dimension="mechanism", limit=50),
+                        "performance_by_target_type": store.performance_summary(dimension="target_type", limit=50),
+                        "performance_by_execution_mode": store.performance_summary(dimension="execution_mode", limit=50),
+                        "performance_by_variant": store.performance_summary(dimension="variant", limit=50),
+                        "allocation_channel_scores": [x.__dict__ for x in AllocationScoringEngine(store).score_dimension("channel", limit=50)],
                     }
                 )
                 return

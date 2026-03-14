@@ -1,3 +1,4 @@
+from .allocation import AllocationOptimizer, AllocationScoringEngine
 from .automation import AutomationCandidateDetector, apply_candidate_transition
 from .execution import ExecutionContext, ExecutionResult, ExecutionRouter
 from .distribution import (
@@ -36,6 +37,8 @@ from .runtime import (
 from .strategy import RiskPolicy, StrategyEngine
 
 __all__ = [
+    "AllocationScoringEngine",
+    "AllocationOptimizer",
     "AgentRuntime",
     "AutomationCandidateDetector",
     "AgentState",

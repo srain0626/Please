@@ -148,59 +148,6 @@ python dashboard.py --db-path agent_state.db --port 8080 --username admin --pass
   - 보안 헤더(`X-Frame-Options`, `X-Content-Type-Options`)
   - JSON API(`/api/summary`) 제공
   - 입력 유효성 검증(상태값/쿼리 limit)
-python main.py --provider claude
-python main.py --provider copilot
-```
-
-- 기본은 **dry-run(stub)** 이므로 API 키 없이도 동작합니다.
-- `--live-api`를 붙이면 실제 API를 호출합니다(해당 키 필요).
-
-## 실 API 사용
-
-### 1) OpenAI
-
-```bash
-export OPENAI_API_KEY="..."
-python main.py --provider openai --model gpt-4o-mini --live-api
-```
-
-### 2) Claude (Anthropic)
-
-```bash
-export ANTHROPIC_API_KEY="..."
-python main.py --provider claude --model claude-3-5-sonnet-latest --live-api
-```
-
-### 3) Copilot (GitHub Models)
-
-```bash
-export GITHUB_TOKEN="..."
-python main.py --provider copilot --model gpt-4o-mini --live-api
-```
-
-## CLI 옵션
-
-- `--provider`: `openai | claude | copilot`
-- `--model`: 모델명 오버라이드
-- `--live-api`: 실제 API 호출 활성화 (기본 off)
-- `--budget`: 시작 예산(기본 700)
-
-## 구현 포인트
-
-1. `StrategyEngine`
-   - 기대수익-비용 중심 정렬
-   - `max_risk_score` 초과 기회 제외
-   - `reserve_ratio` 안전자금 보존
-   - 시장 타입(사업/주식/가상화폐)에 따라 액션 플랜 분기
-
-2. `AgentRuntime`
-   - 메인 에이전트가 팀(`AgentTeam`)을 통해 서브 에이전트에 태스크 배정
-   - `BrokerTool`로 주식/가상화폐 주문 실행 경로 처리
-   - 시장별 보수적 실현계수로 비용/매출 반영
-
-3. `LLM provider layer`
-   - `agent/llm.py`에서 provider별 endpoint/header/payload 처리
-   - 키가 없거나 `--live-api` 미사용이면 자동으로 stub 모드
 
 ## 테스트
 
@@ -222,3 +169,13 @@ python -m unittest discover -s tests -v
 - Stub adapters (`BlogChannelAdapterStub`, `OutreachChannelAdapterStub`, `MarketplaceChannelAdapterStub`) to simulate external distribution without network dependencies.
 - Feedback integration updates mechanism confidence/repeatability and recent hypothesis confidence from conversion outcomes.
 - Dashboard/API now expose distribution targets/channels/runs/events and conversion metrics by channel/mechanism/target type plus token efficiency.
+
+
+## Channel Allocation & Offer Optimization Loop
+
+- Added allocation policy registry (`allocation_policies`) to define base weight, trial bounds, and cooldown by mechanism/channel/target_type/execution_mode.
+- Added offer variant tracking (`offer_variants`) and variant-linked distribution runs for A/B style optimization.
+- Added allocation scoring (`AllocationScoringEngine`) using conversion/response/revenue/token-efficiency plus failure/no-response penalties.
+- Added recommendation registry (`allocation_recommendations`) with types like increase/decrease/pause/promote/retire/switch-mode and auto-applied flag.
+- Added optimizer (`AllocationOptimizer`) that generates reallocation recommendations and feeds results back into mechanism confidence/repeatability.
+- Dashboard/API now expose allocation policies, variant tables, score breakdown, performance summaries, recommendations, and auto-applied history.
