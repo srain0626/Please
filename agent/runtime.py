@@ -4,6 +4,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Iterable, Protocol
 
+from .execution import ExecutionContext, ExecutionRouter
 from .llm import LLMClient
 from .models import AgentState, Opportunity, OpportunityType, Task, TaskStatus
 from .persistence import SQLiteStore
@@ -86,6 +87,7 @@ class AgentRuntime:
         self.config = config or RuntimeConfig()
         self.team = team
         self.store = store
+        self.execution_router = ExecutionRouter(store, browser, shell) if store else None
 
     def run(self, state: AgentState, opportunities: Iterable[Opportunity]) -> AgentState:
         self.recover_pending_orders()
@@ -174,6 +176,7 @@ class AgentRuntime:
                         f"{next_exposure:.2f} > {max_market_exposure:.2f} for market={task.channel.value}"
                     )
 
+            execution_log = self._execute_via_router(task)
             research = self.browser.run(f"시장 검증: {task.title}")
             build_log = self.shell.run("워크플로 빌드 및 실행")
 
@@ -182,9 +185,7 @@ class AgentRuntime:
                 broker_log = self._execute_order(task)
                 self._record_position(task)
 
-            task.notes = (
-                f"assignee={assignee}; research={research}; build={build_log}; broker={broker_log}"
-            )
+            task.notes = f"assignee={assignee}; execution={execution_log}; broker={broker_log}"
 
             state.cash -= task.estimated_cost
             state.cost += task.estimated_cost
@@ -204,6 +205,40 @@ class AgentRuntime:
         finally:
             if self.store:
                 self.store.record_task_run(task=task, assignee=assignee, realized_revenue=realized)
+
+    def _task_type_for_task(self, task: Task) -> str:
+        if task.channel == OpportunityType.STOCK:
+            return "stock_execution"
+        if task.channel == OpportunityType.CRYPTO:
+            return "crypto_execution"
+        return "business_execution"
+
+    def _mechanism_type_for_task(self, task: Task) -> str:
+        if task.channel in (OpportunityType.STOCK, OpportunityType.CRYPTO):
+            return "trading"
+        return "automation_service"
+
+    def _execute_via_router(self, task: Task) -> str:
+        if not self.execution_router:
+            research = self.browser.run(f"시장 검증: {task.title}")
+            build_log = self.shell.run("워크플로 빌드 및 실행")
+            return f"mode=llm_direct;research={research};build={build_log}"
+
+        context = ExecutionContext(
+            task_id=task.id,
+            task_type=self._task_type_for_task(task),
+            mechanism_type=self._mechanism_type_for_task(task),
+            mechanism_id=None,
+            instruction=task.title,
+            expected_value=task.expected_revenue - task.estimated_cost,
+            confidence=0.5,
+        )
+        result = self.execution_router.execute(context)
+        return (
+            f"mode={result.mode};cache_hit={result.cache_hit};escalated={result.escalated};"
+            f"token_cost={result.estimated_token_cost};token_savings={result.estimated_token_savings};"
+            f"output={result.output}"
+        )
 
     def _execute_order(self, task: Task) -> str:
         side = "buy" if task.channel == OpportunityType.STOCK else "BUY"

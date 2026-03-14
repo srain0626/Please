@@ -1,3 +1,5 @@
+from .automation import AutomationCandidateDetector, apply_candidate_transition
+from .execution import ExecutionContext, ExecutionResult, ExecutionRouter
 from .brokers import (
     BinanceBroker,
     BrokerConfig,
@@ -10,6 +12,7 @@ from .brokers import (
 )
 from .lab import LabConfig, OpportunityFactory, StrategyLab
 from .llm import LLMProvider, create_llm_client, default_model
+from .mechanisms import IncomeMechanism, SurvivalScorer
 from .models import AgentState, Opportunity, OpportunityType
 from .persistence import SQLiteStore, TeamKPI
 from .runtime import (
@@ -27,10 +30,15 @@ from .strategy import RiskPolicy, StrategyEngine
 
 __all__ = [
     "AgentRuntime",
+    "AutomationCandidateDetector",
     "AgentState",
+    "ExecutionContext",
+    "ExecutionResult",
+    "ExecutionRouter",
     "AgentTeam",
     "BinanceBroker",
     "BrokerConfig",
+    "apply_candidate_transition",
     "create_llm_client",
     "default_model",
     "LabConfig",
@@ -44,6 +52,8 @@ __all__ = [
     "Opportunity",
     "OpportunityFactory",
     "OpportunityType",
+    "SurvivalScorer",
+    "IncomeMechanism",
     "OrderResult",
     "ValidationResult",
     "SymbolRules",

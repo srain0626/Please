@@ -24,6 +24,13 @@ Conway Research Automaton 스타일(계획 → 실행 → 평가 → 재계획) 
 - **Hypothesis / Experiment Persistence**: `hypotheses`, `experiment_runs` 추가
 - **Strategy Lab Loop**: 실험 결과에 따라 confidence 증감 및 상태 전환('proposed/testing/validated/rejected/archived')
 - **Adaptive Learning Upgrade**: 실험 이력(win-rate/평균수익률) 기반 confidence 보정, fallback promotion, rejected 자동 아카이빙
+- **Income Mechanism Registry**: trading/blogging/freelancing/automation_service/digital_product/lead_generation 공통 모델
+- **Process Blueprint Registry**: 메커니즘별 반복 작업 설계도(JSON schema + steps)
+- **Automation Candidate Detector**: income mechanism에서 자동화 후보 추출 + 상태 전이
+- **Automation Asset/Token Tracking**: 후보별 asset(prompt/script) 및 token cost 관측치 저장
+- **Token Economy Policy**: task_type/mechanism 기준 max token budget + preferred mode + fallback/escalation 정책
+- **Execution Router**: cheap-first/deterministic-first/reusable-first 기반 `llm_direct|prompt_template|rule_based|code_based` 실행 경로 선택
+- **Execution Cache/Reuse Hook**: 동일 입력 반복시 캐시 재사용으로 토큰 비용 절감
 - **리커버리 워커 스캐폴딩**
   - 런타임 시작 시 미완료 주문 의도(`order_intents`)를 스캔해 이벤트로 기록
 - **리스크 가드레일**: 단일 트레이드 비중 제한, 시장별 익스포저 한도, 손실 한도 초과 시 실행 중단
@@ -103,6 +110,14 @@ export BINANCE_API_SECRET="..."
 - `hypotheses`: 수익 가설(thesis/evidence/confidence/status)
 - `hypotheses`는 rejected 누적 시 archived로 자동 전환 가능
 - `experiment_runs`: 가설 실험 결과(pnl/return/outcome/failure_reason)
+- `income_mechanisms`: 투자 외 포함 수익 메커니즘 레지스트리
+- `process_blueprints`: 메커니즘별 정형화 프로세스 블루프린트
+- `automation_candidates`: 자동화 후보(type/status/confidence/reason)
+- `candidate_assets`: 후보별 재사용 asset(prompt/script 등)
+- `token_observations`: 후보별 token in/out/cost 관측치
+- `token_policies`: task type별 token economy 정책
+- `execution_route_logs`: 최근 실행 경로/절감량/에스컬레이션 이력
+- `execution_cache`: 동일 입력 재사용 결과 캐시
 
 또한 `team_kpis()`로 팀원별 task 수, 매출, 비용, 이익을 집계합니다.
 
@@ -118,6 +133,9 @@ python dashboard.py --db-path agent_state.db --port 8080 --username admin --pass
 
 - KPI/수익/비용/미체결 주문 현황 확인
 - hypothesis status counts / top confidence hypotheses / recent experiments / lab summary 확인
+- income mechanism 목록/상태 및 process blueprint 목록 확인
+- automation candidate / token cost 요약 확인
+- token policy / 최근 execution route / execution mode usage / estimated token savings 확인
 - Task Runs / Positions / Order Intents / Executions / KPI Snapshots / Events 조회
 - Order Executions `raw_response`에서 validation 보정/실패 사유 확인 가능
 - 수동 관리 액션

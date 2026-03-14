@@ -197,11 +197,6 @@ class _RetryHTTPMixin:
 
 class MeritzBroker(_RetryHTTPMixin):
     """메리츠증권 API 어댑터."""
-    """메리츠증권 API 어댑터.
-
-    NOTE: 메리츠 OpenAPI 서명/헤더 스펙은 계좌권한/상품군 별로 상이할 수 있어
-    아래 구현은 운영 전 최신 공식 문서 기준으로 최종 검증이 필요합니다.
-    """
 
     def __init__(self, config: BrokerConfig | None = None) -> None:
         self.config = config or BrokerConfig()

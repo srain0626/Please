@@ -49,6 +49,15 @@ def render_dashboard(store: SQLiteStore, flash: str = "") -> str:
     top_hypotheses = store.top_hypotheses_by_confidence(20)
     experiments = store.recent_experiment_runs(30)
     lab = store.lab_summary()
+    mechanisms = store.list_income_mechanisms(30)
+    mechanism_status = store.mechanism_status_counts()
+    blueprints = store.list_process_blueprints(30)
+    automation_candidates = store.list_automation_candidates(30)
+    token_summary = store.token_observation_summary()
+    token_policies = store.list_token_policies(30)
+    execution_routes = store.recent_execution_routes(30)
+    execution_mode_usage = store.execution_mode_usage()
+    execution_savings = store.execution_savings_summary()
 
     kpi_rows = [(k.assignee, k.task_count, round(k.revenue, 2), round(k.cost, 2), round(k.profit, 2)) for k in kpis]
 
@@ -94,6 +103,12 @@ def render_dashboard(store: SQLiteStore, flash: str = "") -> str:
       <div class="card"><div class="k">Rejected Hypothesis</div><div class="v">{metrics['rejected_hypotheses']}</div></div>
       <div class="card"><div class="k">Archived Hypothesis</div><div class="v">{metrics['archived_hypotheses']}</div></div>
       <div class="card"><div class="k">Experiment Avg Return</div><div class="v">{lab['avg_experiment_return_pct']:.2f}</div></div>
+      <div class="card"><div class="k">Mechanisms</div><div class="v">{metrics['mechanism_count']}</div></div>
+      <div class="card"><div class="k">Blueprints</div><div class="v">{metrics['blueprint_count']}</div></div>
+      <div class="card"><div class="k">Automation Candidates</div><div class="v">{metrics['automation_candidate_count']}</div></div>
+      <div class="card"><div class="k">Token Cost (USD)</div><div class="v">{token_summary['token_cost_usd']:.2f}</div></div>
+      <div class="card"><div class="k">LLM Replaced</div><div class="v">{execution_savings['replaced_llm_count']}</div></div>
+      <div class="card"><div class="k">Token Savings (est)</div><div class="v">{execution_savings['estimated_token_savings']}</div></div>
     </div>
 
     <section>
@@ -129,6 +144,15 @@ def render_dashboard(store: SQLiteStore, flash: str = "") -> str:
     <section><h2>Recent Experiments</h2>{_table(['id','hypothesis_id','allocated_budget','result_pnl','result_return_pct','outcome','failure_reason','notes','started_at','completed_at'], experiments)}</section>
 
     <div class="grid">
+      <section><h2>Income Mechanism Status</h2>{_table(['status','count'], mechanism_status)}</section>
+      <section><h2>Income Mechanisms</h2>{_table(['id','type','title','expected_revenue','expected_cost','expected_token_cost','automation_potential','repeatability_score','maintenance_cost','current_stage','status','confidence','time_to_payout','created_at'], [(m[0],m[1],m[2],m[4],m[5],m[6],m[7],m[8],m[9],m[10],m[11],m[12],m[13],m[14]) for m in mechanisms])}</section>
+    </div>
+
+    <section><h2>Process Blueprints</h2>{_table(['id','mechanism_id','task_type','title','automation_status','estimated_token_cost','estimated_run_cost','reuse_count','created_at'], [(b[0],b[1],b[2],b[3],b[11],b[12],b[13],b[14],b[15]) for b in blueprints])}</section>
+    <section><h2>Automation Candidates</h2>{_table(['id','mechanism_id','candidate_type','title','status','confidence','reason','updated_at'], [(c[0],c[1],c[2],c[3],c[4],c[5],c[6],c[8]) for c in automation_candidates])}</section>
+    <section><h2>Token Policies</h2>{_table(['policy_id','task_type','mechanism_type','max_token_budget','preferred_mode','allow_llm_direct','escalation','fallback','caching'], [(p[0],p[1],p[2],p[4],p[5],p[6],p[7],p[8],p[9]) for p in token_policies])}</section>
+
+    <div class="grid">
       <section><h2>Team KPI</h2>{_table(['assignee', 'task_count', 'revenue', 'cost', 'profit'], kpi_rows)}</section>
       <section><h2>최근 시스템 이벤트</h2>{_table(['id', 'event_type', 'details', 'created_at'], events)}</section>
     </div>
@@ -138,6 +162,8 @@ def render_dashboard(store: SQLiteStore, flash: str = "") -> str:
     <section><h2>Order Intents</h2>{_table(['id','task_id','market','symbol','side','budget','client_order_id','status','created_at'], intents)}</section>
     <section><h2>Order Executions</h2>{_table(['id','client_order_id','broker','order_id','status','raw_response','created_at'], executions)}</section>
     <section><h2>KPI Snapshots</h2>{_table(['id','assignee','task_count','revenue','cost','profit','created_at'], snapshots)}</section>
+    <section><h2>Execution Mode Usage</h2>{_table(['mode','count'], execution_mode_usage)}</section>
+    <section><h2>Recent Execution Routes</h2>{_table(['id','task_id','task_type','mechanism_type','selected_mode','fallback_mode','reason','token_cost','token_savings','escalated','status','created_at'], execution_routes)}</section>
   </div>
 </body>
 </html>
@@ -203,6 +229,15 @@ def create_handler(store: SQLiteStore, config: DashboardConfig):
                         "recent_experiments": store.recent_experiment_runs(10),
                         "top_hypotheses": store.top_hypotheses_by_confidence(10),
                         "lab_summary": store.lab_summary(),
+                        "mechanism_status_counts": store.mechanism_status_counts(),
+                        "income_mechanisms": store.list_income_mechanisms(20),
+                        "process_blueprints": store.list_process_blueprints(20),
+                        "automation_candidates": store.list_automation_candidates(20),
+                        "token_observation_summary": store.token_observation_summary(),
+                        "token_policies": store.list_token_policies(50),
+                        "recent_execution_routes": store.recent_execution_routes(50),
+                        "execution_mode_usage": store.execution_mode_usage(),
+                        "execution_savings_summary": store.execution_savings_summary(),
                     }
                 )
                 return

@@ -6,6 +6,7 @@ from agent import (
     AgentRuntime,
     AgentState,
     AgentTeam,
+    AutomationCandidateDetector,
     LLMBrowser,
     LLMShell,
     LLMProvider,
@@ -69,6 +70,115 @@ def sample_opportunities() -> list[Opportunity]:
     ]
 
 
+def seed_income_mechanisms(store: SQLiteStore) -> None:
+    if store.list_income_mechanisms(limit=1):
+        return
+
+    blogging_id = store.create_income_mechanism(
+        mechanism_type="blogging",
+        title="AI 자동화 블로그 수익화",
+        description="키워드 클러스터링 + 포스트 드래프팅 + 광고/제휴 전환",
+        expected_revenue=220.0,
+        expected_cost=40.0,
+        expected_token_cost=20.0,
+        automation_potential=0.85,
+        repeatability_score=0.8,
+        maintenance_cost=25.0,
+        current_stage="mvp",
+        status="testing",
+        confidence_score=0.62,
+        time_to_payout=0.7,
+    )
+    store.create_process_blueprint(
+        mechanism_id=blogging_id,
+        task_type="blog_post_drafting",
+        title="SEO 포스트 자동 초안",
+        description="키워드에서 제목/개요/본문 초안 생성",
+        inputs_schema='{"keyword": "str", "intent": "str"}',
+        output_schema='{"title": "str", "outline": "list", "draft": "str"}',
+        steps_json='["research", "outline", "draft", "qa"]',
+        can_be_templated=True,
+        can_be_ruled=True,
+        can_be_coded=True,
+        automation_status="ready",
+        estimated_token_cost=3.0,
+        estimated_run_cost=0.2,
+        reuse_count=0,
+    )
+
+    freelancing_id = store.create_income_mechanism(
+        mechanism_type="freelancing",
+        title="AI 제안서 자동화 외주",
+        description="리드 필터링 + 제안서 작성 자동화로 수주율 향상",
+        expected_revenue=350.0,
+        expected_cost=90.0,
+        expected_token_cost=15.0,
+        automation_potential=0.6,
+        repeatability_score=0.7,
+        maintenance_cost=35.0,
+        current_stage="scaling",
+        status="active",
+        confidence_score=0.68,
+        time_to_payout=0.45,
+    )
+    store.create_process_blueprint(
+        mechanism_id=freelancing_id,
+        task_type="proposal_drafting",
+        title="외주 제안서 생성",
+        description="요구사항 기반 문제정의/범위/일정/가격 제안",
+        inputs_schema='{"client_brief": "str"}',
+        output_schema='{"proposal": "str", "price_range": "tuple"}',
+        steps_json='["parse_brief", "scope", "pricing", "proposal"]',
+        can_be_templated=True,
+        can_be_ruled=True,
+        can_be_coded=False,
+        automation_status="partial",
+        estimated_token_cost=2.5,
+        estimated_run_cost=0.1,
+        reuse_count=0,
+    )
+
+
+
+
+
+def seed_automation_assets(store: SQLiteStore) -> None:
+    detector = AutomationCandidateDetector(store)
+    detector.detect()
+    candidates = store.list_automation_candidates(limit=5)
+    if not candidates:
+        return
+    candidate_id = int(candidates[0][0])
+    if not store.list_candidate_assets(candidate_id, limit=1):
+        store.record_candidate_asset(
+            candidate_id=candidate_id,
+            asset_key="prompt:lead-qualifier-v1",
+            asset_kind="prompt_template",
+            payload='{"goal":"qualify leads quickly","version":"v1"}',
+        )
+    if not store.list_token_observations(candidate_id, limit=1):
+        store.record_token_observation(candidate_id=candidate_id, tokens_in=420, tokens_out=180, cost_usd=0.023)
+
+
+
+def seed_token_policies(store: SQLiteStore) -> None:
+    presets = [
+        ("business_execution", "automation_service", 240, "code_based", False, "on_failure", "llm_direct", True),
+        ("stock_execution", "trading", 180, "rule_based", False, "on_failure", "llm_direct", True),
+        ("crypto_execution", "trading", 180, "rule_based", False, "on_failure", "llm_direct", True),
+    ]
+    for task_type, mechanism_type, budget, preferred, allow_llm, escalation, fallback, caching in presets:
+        store.upsert_token_policy(
+            task_type=task_type,
+            mechanism_type=mechanism_type,
+            max_token_budget=budget,
+            preferred_execution_mode=preferred,
+            allow_llm_direct=allow_llm,
+            escalation_condition=escalation,
+            fallback_mode=fallback,
+            caching_enabled=caching,
+        )
+
 def build_default_team() -> AgentTeam:
     return AgentTeam(
         lead_name="main-agent",
@@ -121,6 +231,9 @@ def main() -> None:
     state = AgentState(starting_budget=args.budget, cash=args.budget)
     team = build_default_team()
     store = SQLiteStore(db_path=args.db_path)
+    seed_income_mechanisms(store)
+    seed_automation_assets(store)
+    seed_token_policies(store)
 
     lab = StrategyLab(
         store=store,

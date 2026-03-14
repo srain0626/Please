@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, List
 
+from .mechanisms import SurvivalScorer
 from .models import AgentState, Opportunity, OpportunityType, Task
 
 
@@ -39,6 +40,31 @@ class StrategyEngine:
             + (repeatability * 0.10)
             + (payout_speed * 0.06)
         )
+
+
+    def score_mechanism(
+        self,
+        *,
+        expected_revenue: float,
+        expected_cost: float,
+        expected_token_cost: float,
+        automation_potential: float,
+        repeatability_score: float,
+        maintenance_cost: float,
+        confidence_score: float,
+        time_to_payout: float,
+    ) -> dict:
+        breakdown = SurvivalScorer.score(
+            expected_revenue=expected_revenue,
+            expected_cost=expected_cost,
+            expected_token_cost=expected_token_cost,
+            automation_potential=automation_potential,
+            repeatability_score=repeatability_score,
+            maintenance_cost=maintenance_cost,
+            confidence_score=confidence_score,
+            time_to_payout=time_to_payout,
+        )
+        return breakdown.to_dict()
 
     def select(self, opportunities: Iterable[Opportunity], state: AgentState) -> List[Task]:
         reserve_cash = state.starting_budget * self.policy.reserve_ratio
