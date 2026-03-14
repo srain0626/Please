@@ -177,6 +177,8 @@ class AgentRuntime:
                     )
 
             execution_log = self._execute_via_router(task)
+            research = self.browser.run(f"시장 검증: {task.title}")
+            build_log = self.shell.run("워크플로 빌드 및 실행")
 
             broker_log = ""
             if task.channel in (OpportunityType.STOCK, OpportunityType.CRYPTO):
