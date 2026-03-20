@@ -19,7 +19,7 @@ from .brokers import (
     ValidationResult,
 )
 from .lab import LabConfig, OpportunityFactory, StrategyLab
-from .llm import LLMProvider, create_llm_client, default_model
+from .llm import GeminiAuthMode, LLMProvider, create_llm_client, default_model
 from .mechanisms import IncomeMechanism, SurvivalScorer
 from .models import AgentState, Opportunity, OpportunityType
 from .persistence import SQLiteStore, TeamKPI
@@ -61,6 +61,7 @@ __all__ = [
     "LLMBrowser",
     "LLMShell",
     "LLMProvider",
+    "GeminiAuthMode",
     "MeritzBroker",
     "MockBroker",
     "MockBrowser",

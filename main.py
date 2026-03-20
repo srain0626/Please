@@ -11,6 +11,7 @@ from agent import (
     AutomationCandidateDetector,
     LLMBrowser,
     LLMShell,
+    GeminiAuthMode,
     LLMProvider,
     LabConfig,
     Opportunity,
@@ -325,7 +326,13 @@ def parse_args() -> argparse.Namespace:
         "--provider",
         choices=[p.value for p in LLMProvider],
         default="openai",
-        help="LLM provider: openai | claude | copilot",
+        help="LLM provider: openai | claude | copilot | gemini",
+    )
+    parser.add_argument(
+        "--gemini-auth",
+        choices=[mode.value for mode in GeminiAuthMode],
+        default="auto",
+        help="Gemini auth mode: auto | api_key | cli",
     )
     parser.add_argument("--model", default=None, help="Override model name")
     parser.add_argument(
@@ -355,7 +362,12 @@ def main() -> None:
     args = parse_args()
     provider = LLMProvider(args.provider)
     model = args.model or default_model(provider)
-    llm = create_llm_client(provider=provider, model=model, live_api=args.live_api)
+    llm = create_llm_client(
+        provider=provider,
+        model=model,
+        live_api=args.live_api,
+        gemini_auth_mode=args.gemini_auth,
+    )
 
     state = AgentState(starting_budget=args.budget, cash=args.budget)
     team = build_default_team()

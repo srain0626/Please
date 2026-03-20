@@ -51,8 +51,20 @@
 python main.py --provider openai
 ```
 
+### Gemini 실행 예시
+```bash
+# 1) API key 방식
+export GEMINI_API_KEY="..."
+python main.py --provider gemini --live-api --gemini-auth api_key
+
+# 2) Gemini CLI 로그인 방식
+# 먼저 로컬에서 gemini CLI 로그인을 완료한 뒤
+python main.py --provider gemini --live-api --gemini-auth cli
+```
+
 ### 주요 옵션
-- `--provider`: `openai | claude | copilot`
+- `--provider`: `openai | claude | copilot | gemini`
+- `--gemini-auth`: `auto | api_key | cli`
 - `--model`: 모델명 오버라이드
 - `--live-api`: 실제 LLM API 호출
 - `--budget`: 시작 예산
@@ -70,6 +82,9 @@ python main.py --provider openai
 export OPENAI_API_KEY="..."
 export ANTHROPIC_API_KEY="..."
 export GITHUB_TOKEN="..."
+export GEMINI_API_KEY="..."
+# 또는 일부 환경에서는 GOOGLE_API_KEY 사용 가능
+export GOOGLE_API_KEY="..."
 ```
 
 ### Broker
@@ -84,7 +99,7 @@ export BINANCE_API_KEY="..."
 export BINANCE_API_SECRET="..."
 ```
 
-> 키가 없으면 기본적으로 안전한 stub/dry-run 경로를 사용합니다.
+> 키가 없으면 기본적으로 안전한 stub/dry-run 경로를 사용합니다. Gemini는 `--gemini-auth auto`일 때 **API key가 있으면 API key 우선**, 없고 `gemini` CLI가 PATH에 있으면 **CLI 인증 경로**를 사용합니다.
 
 ---
 
